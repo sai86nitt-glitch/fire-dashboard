@@ -1,0 +1,49 @@
+[
+  {
+    "_comment": "Rules are applied in order. First matching rule wins per field.",
+    "_comment2": "match: 'phrase' = whole-word case-insensitive, 'contains' = substring case-insensitive",
+    "_comment3": "add_tags: merged with existing tags. set_type: overrides transaction type. transfer_to: sets transfer destination."
+  },
+
+  { "match": "phrase",    "value": "parking",     "add_tags": ["Car / Toll"] },
+  { "match": "phrase",    "value": "food",         "add_tags": ["Food / Restaurants"], "set_type": "expense" },
+  { "match": "phrase",    "value": "sipg",         "add_tags": ["Car / Toll"] },
+  { "match": "phrase",    "value": "indusasalary", "add_tags": ["Services"], "set_type": "expense" },
+  { "match": "contains",  "value": "Bse",          "add_tags": ["Investment"] },
+  { "match": "contains",  "value": "Clearing",     "add_tags": ["Investment"], "set_type": "transfer", "transfer_to": "OneTreeHill" },
+  { "match": "contains",  "value": "grocery",      "add_tags": ["Supplies"] },
+  { "match": "contains",  "value": "1mg",          "add_tags": ["Health / Pharmacy"] },
+  { "match": "contains",  "value": "cleartrip",    "add_tags": ["Travel / Air Travel"] },
+  { "match": "phrase",    "value": "senthome",     "add_tags": ["Family"] },
+  { "match": "phrase",    "value": "invest",       "add_tags": ["Investment"] },
+  { "match": "contains",  "value": "Blink",        "add_tags": ["Supplies"] },
+
+  {
+    "_comment": "── Extra rules beyond Buxfer (description-based auto-tagging) ─────────────"
+  },
+
+  { "match": "contains",  "value": "zomato",       "add_tags": ["Food / Restaurants"], "set_type": "expense" },
+  { "match": "contains",  "value": "swiggy",       "add_tags": ["Food / Restaurants"], "set_type": "expense" },
+  { "match": "contains",  "value": "starbucks",    "add_tags": ["Food / Restaurants"], "set_type": "expense" },
+  { "match": "contains",  "value": "domino",       "add_tags": ["Food / Restaurants"], "set_type": "expense" },
+  { "match": "contains",  "value": "blinkit",      "add_tags": ["Supplies"],           "set_type": "expense" },
+  { "match": "contains",  "value": "bigbasket",    "add_tags": ["Supplies"],           "set_type": "expense" },
+  { "match": "contains",  "value": "zepto",        "add_tags": ["Supplies"],           "set_type": "expense" },
+  { "match": "contains",  "value": "amazon",       "add_tags": ["Shopping"],           "set_type": "expense" },
+  { "match": "contains",  "value": "flipkart",     "add_tags": ["Shopping"],           "set_type": "expense" },
+  { "match": "contains",  "value": "uber",         "add_tags": ["Public Transport / Taxi"], "set_type": "expense" },
+  { "match": "contains",  "value": "meru",         "add_tags": ["Public Transport / Taxi"], "set_type": "expense" },
+  { "match": "contains",  "value": "irctc",        "add_tags": ["Travel"],             "set_type": "expense" },
+  { "match": "contains",  "value": "cleartrip",    "add_tags": ["Travel / Air Travel"],"set_type": "expense" },
+  { "match": "contains",  "value": "makemytrip",   "add_tags": ["Travel / Air Travel"],"set_type": "expense" },
+  { "match": "phrase",    "value": "jio",          "add_tags": ["Utilities"],          "set_type": "expense" },
+  { "match": "contains",  "value": "airtel",       "add_tags": ["Utilities"],          "set_type": "expense" },
+  { "match": "contains",  "value": "apple inc",    "add_tags": ["Software"],           "set_type": "expense" },
+  { "match": "phrase",    "value": "netflix",      "add_tags": ["Fun"],                "set_type": "expense" },
+  { "match": "contains",  "value": "spotify",      "add_tags": ["Fun"],                "set_type": "expense" },
+  { "match": "contains",  "value": "hotstar",      "add_tags": ["Fun"],                "set_type": "expense" },
+  { "match": "contains",  "value": "bookmyshow",   "add_tags": ["Movies"],             "set_type": "expense" },
+  { "match": "contains",  "value": "pvr",          "add_tags": ["Movies"],             "set_type": "expense" },
+  { "match": "contains",  "value": "apollo",       "add_tags": ["Health / Pharmacy"],  "set_type": "expense" },
+  { "match": "contains",  "value": "practo",       "add_tags": ["Health / Doctor"],    "set_type": "expense" }
+]

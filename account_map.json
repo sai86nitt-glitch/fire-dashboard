@@ -1,0 +1,16 @@
+{
+  "_comment": "Maps statement-derived account names to canonical Buxfer account names.",
+  "_comment2": "Key = name produced by the statement parser. Value = Buxfer account name to use instead.",
+  "_comment3": "Edit this file whenever you add a new statement source whose account name differs from Buxfer.",
+
+  "ICICI Savings 2826": "ICICI Salary",
+  "ICICI Savings 0319": "Swaritha ICICI",
+  "ICICI Savings 4266": "ANMAY SWARITHA KAMBHATLA (MINOR) xxxx4266",
+  "Axis Savings Joint": "Axis Joint",
+
+  "ICICI CC 4000":      "ICICIBankSapphiroVisaCreditCard xxxxards",
+  "ICICI CC 5006":      "ICICIBankSapphiroVisaCreditCard xxxxards",
+  "ICICI CC 6005":      "ICICIBankSapphiroVisaCreditCard xxxxards",
+  "ICICI CC 3784":      "ICICIBankSapphiroVisaCreditCard xxxxards",
+  "ICICI CC 3829":      "ICICIBankSapphiroVisaCreditCard xxxxards"
+}

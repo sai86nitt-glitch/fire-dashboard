@@ -1,0 +1,4 @@
+# Push only .gs and appsscript.json — ignore everything else
+**
+!*.gs
+!appsscript.json

@@ -1,0 +1,41 @@
+{
+  "_comment": "Master portfolio config. Edit manually or use epf_sms_parser.py to update EPF section.",
+
+  "epf": {
+    "_comment": "Updated from EPFO SMS. Run epf_sms_parser.py to refresh balance/last_contribution.",
+    "total_balance":           11618040,
+    "last_monthly_contribution": 72806,
+    "last_updated":            "2026-04-30",
+
+    "_split_comment": "Confirmed by member: employee = 50% of total contribution, employer = 50%.",
+    "employee_share_pct":      0.50,
+    "employer_epf_share_pct":  0.50,
+
+    "_growth_comment": "contribution_step_up_pct = annual % increase in monthly contribution (salary increments).",
+    "contribution_step_up_pct": 0.05,
+
+    "_rate_comment": "EPF interest rate. Check https://www.epfindia.gov.in for annual revision.",
+    "interest_rate_pct":       0.0825,
+    "fy_rate_history": {
+      "2021-22": 0.0810,
+      "2022-23": 0.0815,
+      "2023-24": 0.0825,
+      "2024-25": 0.0825
+    },
+
+    "_tax_comment": "Employee contributions above Rs 2.5L/year: interest on excess is taxable at slab rate.",
+    "tax_exempt_annual_threshold": 250000,
+    "marginal_tax_rate_pct":   0.312
+  },
+
+  "sip_step_up": {
+    "_comment": "Annual increment applied to all SIP amounts at the start of each financial year.",
+    "step_up_pct": 0.10
+  },
+
+  "bonus": {
+    "_comment": "Annual lump-sum investment (typically April/May each year).",
+    "annual_amount": 0,
+    "month":         4
+  }
+}

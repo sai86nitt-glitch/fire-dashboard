@@ -1,0 +1,17 @@
+# OAuth credentials — NEVER commit
+client_secret_*.json
+token.json
+
+# Personal financial data — keep local only
+bankstatements/
+outputs/
+*.pdf
+
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.env
