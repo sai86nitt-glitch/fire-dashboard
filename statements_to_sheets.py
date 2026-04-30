@@ -37,9 +37,11 @@ def canonical_account(name):
     """Return the Buxfer-canonical account name, falling back to the original."""
     return ACCOUNT_MAP.get(name, name)
 
-TXN_HEADERS = ["id","description","amount","expense_amount","income_amount",
-               "date","type","status","account_id","account_name","tags","is_pending",
-               "transfer_from","transfer_to"]
+# Must match buxfer_to_sheets.py column order exactly so tags/type/date land
+# in the correct columns and the dashboard's tag editor works uniformly.
+TXN_HEADERS = ["id","description","amount","type","tags",
+               "date","month","year","source","account_name",
+               "buxfer_id","expense_type","transfer_from","transfer_to"]
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def get_creds():
@@ -82,21 +84,23 @@ def norm_date(s, fmt_hints=None):
     return s  # fallback
 
 def make_row(date, desc, amount, is_debit, account_name):
-    # Unified schema:
-    #   amount         = signed: +ve for debit/expense, -ve for credit/income
-    #   expense_amount = always positive debit amount, 0 if credit
-    #   income_amount  = always positive credit amount, 0 if debit
-    #   transfer_from/to = filled in by transfer-collapse logic, empty here
-    signed_amt   = round(amount, 2) if is_debit else round(-amount, 2)
-    expense_amt  = round(amount, 2) if is_debit else 0
-    income_amt   = 0 if is_debit else round(amount, 2)
-    txn_type     = "expense" if is_debit else "income"
-    canon_name   = canonical_account(account_name)
-    row_id       = make_id(date, desc, amount, canon_name)
+    """
+    Build a transaction row matching the unified 14-column schema:
+    id | description | amount | type | tags | date | month | year |
+    source | account_name | buxfer_id | expense_type | transfer_from | transfer_to
+    """
+    signed_amt = round(amount, 2) if is_debit else round(-amount, 2)
+    txn_type   = "expense" if is_debit else "income"
+    canon_name = canonical_account(account_name)
+    row_id     = make_id(date, desc, amount, canon_name)
     # Apply tagging rules — may add tags or override type
     tags, eff_type, _ = apply_tagging_rules(desc, "", txn_type)
-    return [row_id, desc, signed_amt, expense_amt, income_amt,
-            date, eff_type, "cleared", "", canon_name, tags, "FALSE", "", ""]
+    # Derive month / year from date string (YYYY-MM-DD)
+    month = str(date)[:7]   # "YYYY-MM"
+    year  = str(date)[:4]   # "YYYY"
+    return [row_id, desc, signed_amt, eff_type, tags,
+            date, month, year, "statement", canon_name,
+            "", "", "", ""]
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
 def parse_axis_cc_xlsx(path):
@@ -408,11 +412,20 @@ def main():
         except:
             return {d}
 
+    # Column indices for new unified schema:
+    #   0=id, 1=desc, 2=amount, 3=type, 4=tags, 5=date, 6=month, 7=year,
+    #   8=source, 9=account_name, 10=buxfer_id, 11=expense_type, 12=transfer_from, 13=transfer_to
+    COL_TYPE   = 3
+    COL_DATE   = 5
+    COL_ACCT   = 9
+    COL_XFROM  = 12
+    COL_XTO    = 13
+
     # Index by (amount) → list of (i, date, type)
     by_amount = defaultdict(list)
     for i, row in enumerate(all_new):
         amt = str(abs(float(str(row[2]).replace(",", "") or 0)))
-        by_amount[amt].append((i, str(row[5]), row[6]))  # (idx, date, type)
+        by_amount[amt].append((i, str(row[COL_DATE]), row[COL_TYPE]))
 
     transfer_indices = set()
     for amt, entries in by_amount.items():
@@ -424,15 +437,12 @@ def main():
             exp_variants = date_variants(exp_date)
             for inc_i, inc_date in incomes:
                 if inc_date in exp_variants and inc_i not in transfer_indices:
-                    transfer_indices.add(inc_i)           # drop income side
+                    transfer_indices.add(inc_i)                   # drop income side
                     exp_row = all_new[exp_i]
                     inc_row = all_new[inc_i]
-                    exp_row[6] = "transfer"               # relabel expense side as transfer
-                    exp_row[3] = exp_row[2]               # expense_amount = abs(amount) for source
-                    exp_row[4] = 0                        # income_amount  = 0 for source
-                    # Record transfer direction: source=this account, dest=income-side account
-                    exp_row[12] = exp_row[9]              # transfer_from = this account name
-                    exp_row[13] = inc_row[9]              # transfer_to   = other account name
+                    exp_row[COL_TYPE]  = "transfer"               # relabel as transfer
+                    exp_row[COL_XFROM] = exp_row[COL_ACCT]        # transfer_from = source account
+                    exp_row[COL_XTO]   = inc_row[COL_ACCT]        # transfer_to   = dest account
                     break
 
     print(f"  Detected {len(transfer_indices)} inter-account transfers collapsed (±1 day)")
