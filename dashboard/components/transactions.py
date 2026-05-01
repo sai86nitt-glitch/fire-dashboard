@@ -147,36 +147,45 @@ def tag_chips_text(tag_str: str, tag_tree: dict) -> str:
 
 # ─── Pagination ───────────────────────────────────────────────────────────────
 
-def render_pagination(total: int, key: str = "txn_page", page_size: int = 100) -> int:
+def render_pagination(
+    total: int,
+    key: str = "txn_page",
+    page_size: int = 100,
+    state_key: str = None,
+) -> int:
     """
     Renders  ⟪ ‹ X–Y of N › ⟫  controls.
-    State lives in st.session_state[key].
+    `key`       — prefix for button element IDs (must be unique per render call)
+    `state_key` — session_state key for the current page (defaults to `key`).
+                  Pass the same state_key to both top and bottom pagination
+                  so they share page position without duplicate element IDs.
     Returns current 0-based page index.
     """
-    if key not in st.session_state:
-        st.session_state[key] = 0
+    sk = state_key if state_key is not None else key   # session state key
 
-    page        = int(st.session_state[key])
+    if sk not in st.session_state:
+        st.session_state[sk] = 0
+
+    page        = int(st.session_state[sk])
     total_pages = max(1, (total + page_size - 1) // page_size)
     page        = min(page, total_pages - 1)
-    st.session_state[key] = page
+    st.session_state[sk] = page
 
     start = page * page_size + 1
     end   = min((page + 1) * page_size, total)
 
-    # Layout: [label][First][Prev][count][Next][Last]
     c = st.columns([3, 1, 1, 2, 1, 1])
     c[0].caption(f"Rows **{start}–{end}** of **{total:,}**")
 
     if c[1].button("⟪", key=f"{key}_first", disabled=(page == 0), use_container_width=True):
-        st.session_state[key] = 0; st.rerun()
+        st.session_state[sk] = 0; st.rerun()
     if c[2].button("‹",  key=f"{key}_prev",  disabled=(page == 0), use_container_width=True):
-        st.session_state[key] = page - 1; st.rerun()
+        st.session_state[sk] = page - 1; st.rerun()
     c[3].caption(f"Page **{page+1}** / {total_pages}")
     if c[4].button("›",  key=f"{key}_next",  disabled=(page >= total_pages-1), use_container_width=True):
-        st.session_state[key] = page + 1; st.rerun()
+        st.session_state[sk] = page + 1; st.rerun()
     if c[5].button("⟫", key=f"{key}_last",  disabled=(page >= total_pages-1), use_container_width=True):
-        st.session_state[key] = total_pages - 1; st.rerun()
+        st.session_state[sk] = total_pages - 1; st.rerun()
 
     return page
 

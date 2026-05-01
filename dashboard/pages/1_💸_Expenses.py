@@ -137,15 +137,16 @@ if bar_event and bar_event.selection and bar_event.selection.points:
 
 st.divider()
 
-# ─── Category breakdown (pie) + drill-down via selectbox ──────────────────────
-col_pie, col_merch = st.columns([1, 1])
+# ─── Category breakdown (pie + table) ────────────────────────────────────────
+st.subheader("Category Breakdown")
+st.caption("Click a category in the table to see its transactions ↓")
+
+cat_totals = filtered.groupby("primary_tag")["amount"].sum().reset_index()
+cat_totals = cat_totals.sort_values("amount", ascending=False)
+
+col_pie, col_cat = st.columns([1, 1])
 
 with col_pie:
-    st.subheader("Category Breakdown")
-
-    cat_totals = filtered.groupby("primary_tag")["amount"].sum().reset_index()
-    cat_totals = cat_totals.sort_values("amount", ascending=False)
-
     fig_pie = px.pie(
         cat_totals, names="primary_tag", values="amount",
         color_discrete_sequence=px.colors.qualitative.Set3,
@@ -156,32 +157,39 @@ with col_pie:
         hovertemplate="<b>%{label}</b><br>₹%{value:,.0f} (%{percent})<extra></extra>",
     )
     fig_pie.update_layout(
-        height=320, paper_bgcolor="rgba(0,0,0,0)", font_color="white",
-        showlegend=False, margin=dict(t=20, b=10),
+        height=340, paper_bgcolor="rgba(0,0,0,0)", font_color="white",
+        showlegend=False, margin=dict(t=10, b=10),
     )
     st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Drill-down via selectbox (pie clicks hide slices — use dropdown instead)
-    drill_cat = st.selectbox(
-        "🔍 Drill into category",
-        ["— select to expand —"] + cat_totals["primary_tag"].tolist(),
-        key="pie_drill",
+with col_cat:
+    # Category summary table — richer than pie alone
+    total_spend = cat_totals["amount"].sum()
+    n_months    = max(filtered["month"].nunique(), 1)
+    cat_summary = cat_totals.copy()
+    cat_summary["pct"]     = (cat_summary["amount"] / total_spend * 100).round(1)
+    cat_summary["avg_mo"]  = (cat_summary["amount"] / n_months).apply(fmt_inr)
+    cat_summary["txns"]    = cat_summary["primary_tag"].apply(
+        lambda t: (filtered["primary_tag"] == t).sum()
     )
-    if drill_cat != "— select to expand —":
-        pie_drill = filtered[filtered["primary_tag"] == drill_cat]
-        st.info(f"**{drill_cat}** — {len(pie_drill)} transactions · {fmt_inr(pie_drill['amount'].sum())}")
-        show_txn_table(pie_drill, key="pie_drill_table")
+    cat_summary["amount"]  = cat_summary["amount"].apply(fmt_inr)
+    cat_summary["pct"]     = cat_summary["pct"].apply(lambda x: f"{x}%")
+    cat_summary = cat_summary.rename(columns={
+        "primary_tag": "Category", "amount": "Total",
+        "pct": "Share", "avg_mo": "Avg/Month", "txns": "Txns",
+    })
+    st.dataframe(cat_summary, use_container_width=True, hide_index=True, height=340)
 
-with col_merch:
-    st.subheader("Top Merchants")
-    top_merch = (
-        filtered.groupby("description")
-        .agg(total=("amount","sum"), count=("amount","count"))
-        .reset_index().sort_values("total", ascending=False).head(15)
-    )
-    top_merch["total"] = top_merch["total"].apply(fmt_inr)
-    top_merch.columns  = ["Description","Total Spent","# Txns"]
-    st.dataframe(top_merch, use_container_width=True, hide_index=True)
+# Drill-down — full width, prominent selectbox
+drill_cat = st.selectbox(
+    "🔍 Drill into a category to see transactions",
+    ["— pick a category —"] + cat_totals["primary_tag"].tolist(),
+    key="pie_drill",
+)
+if drill_cat != "— pick a category —":
+    pie_drill = filtered[filtered["primary_tag"] == drill_cat]
+    st.info(f"**{drill_cat}** — {len(pie_drill)} transactions · {fmt_inr(pie_drill['amount'].sum())}")
+    show_txn_table(pie_drill, key="pie_drill_table")
 
 st.divider()
 

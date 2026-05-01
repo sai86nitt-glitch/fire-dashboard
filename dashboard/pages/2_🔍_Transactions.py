@@ -216,7 +216,7 @@ with bar_col:
     bulk_action = render_bulk_bar(sel_count, key="bulk_top")
 
 with pag_col:
-    _ = render_pagination(total_rows, key="txn_page", page_size=PAGE_SIZE)
+    _ = render_pagination(total_rows, key="txn_page_top", state_key="txn_page", page_size=PAGE_SIZE)
 
 # ─── Main table ───────────────────────────────────────────────────────────────
 
@@ -240,7 +240,7 @@ st.session_state["txn_sel_rows"] = selected_page_rows
 
 # ─── Pagination (bottom) ──────────────────────────────────────────────────────
 
-render_pagination(total_rows, key="txn_page", page_size=PAGE_SIZE)
+render_pagination(total_rows, key="txn_page_bot", state_key="txn_page", page_size=PAGE_SIZE)
 
 st.caption(f"Showing {page_start+1}–{page_end} of {total_rows:,} transactions")
 
