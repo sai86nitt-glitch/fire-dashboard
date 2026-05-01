@@ -140,9 +140,22 @@ def load_tags() -> list:
         return []
 
 
+def _tags_col(ws) -> int:
+    """
+    Return the 1-based column number of the 'tags' column.
+    Looked up dynamically so schema changes never break saves.
+    """
+    headers = ws.row_values(1)
+    try:
+        return headers.index("tags") + 1
+    except ValueError:
+        # Fallback: column 11 is where tags live in the buxfer schema
+        return 11
+
+
 def update_transaction_tags(txn_id: str, new_tags: str) -> bool:
     """
-    Find the transaction row by id and update its tags cell (column E).
+    Find the transaction row by id and update its tags cell.
     Uses col_values() for reliable exact-match search (ws.find uses regex
     and breaks on IDs containing special chars like * / | ).
     Returns True on success.
@@ -150,13 +163,14 @@ def update_transaction_tags(txn_id: str, new_tags: str) -> bool:
     try:
         ss      = _open_sheet()
         ws      = ss.worksheet("Transactions")
-        all_ids = ws.col_values(1)          # read entire column A as plain list
+        tags_col = _tags_col(ws)
+        all_ids = ws.col_values(1)
         if txn_id not in all_ids:
             st.warning(f"ID not found in sheet: `{txn_id[:80]}`")
             return False
-        row_num = all_ids.index(txn_id) + 1  # 1-based row number
-        ws.update_cell(row_num, 5, new_tags)  # column E = tags
-        load_transactions.clear()             # bust cache so next read is fresh
+        row_num = all_ids.index(txn_id) + 1
+        ws.update_cell(row_num, tags_col, new_tags)
+        load_transactions.clear()
         return True
     except Exception as e:
         st.error(f"Save failed: {e}")
@@ -172,15 +186,16 @@ def batch_update_tags(updates: dict) -> tuple:
     if not updates:
         return 0, []
     try:
-        ss      = _open_sheet()
-        ws      = ss.worksheet("Transactions")
-        all_ids = ws.col_values(1)
-        cells   = []
-        failed  = []
+        ss       = _open_sheet()
+        ws       = ss.worksheet("Transactions")
+        tags_col = _tags_col(ws)          # dynamic — survives schema changes
+        all_ids  = ws.col_values(1)
+        cells    = []
+        failed   = []
         for txn_id, new_tags in updates.items():
             if txn_id in all_ids:
                 row_num = all_ids.index(txn_id) + 1
-                cells.append(gspread.Cell(row_num, 5, new_tags))
+                cells.append(gspread.Cell(row_num, tags_col, new_tags))
             else:
                 failed.append(txn_id)
         if cells:

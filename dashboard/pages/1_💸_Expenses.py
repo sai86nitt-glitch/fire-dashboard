@@ -283,14 +283,15 @@ else:
         with st.spinner(f"Saving {len(updates)} tag(s)…"):
             saved, failed = batch_update_tags(updates)
         if saved:
+            # Keep IDs in saved_ids — do NOT clear until fresh data loads without them.
+            # Clearing immediately causes the loop: rerun → editor still shows the tag
+            # → ID not in saved_ids → saves again → rerun → ...
             st.session_state[saved_ids_key].update(updates.keys())
             st.success(f"✅ Saved {saved} tag(s)!")
+            load_transactions.clear()   # force fresh data on next load
+            st.rerun()
         if failed:
             st.warning(f"⚠️ {len(failed)} ID(s) not found: {[f[:30] for f in failed[:3]]}")
-        if saved:
-            load_transactions.clear()           # bust cache so fresh data loads
-            st.session_state[saved_ids_key] = set()  # clear; fresh data has no untagged
-            st.rerun()
     else:
         if st.button("💾 Save Changes", type="primary"):
             # Manual save — picks up anything the auto-detect missed
