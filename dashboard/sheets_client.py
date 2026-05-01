@@ -185,6 +185,75 @@ def batch_update_tags(updates: dict) -> tuple:
         return 0, list(updates.keys())
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_tag_objects() -> list:
+    """
+    Load tags as full objects [{name, parent, display}].
+    Supports Tags sheet with optional 'parent' column, or slash-notation names.
+    """
+    try:
+        ws   = _open_sheet().worksheet("Tags")
+        data = ws.get_all_records()
+        result = []
+        for r in data:
+            raw  = str(r.get("name", "")).strip()
+            par  = str(r.get("parent", "")).strip()
+            if not raw or raw in ("nan", ""):
+                continue
+            if par in ("nan", ""):
+                par = ""
+            # Slash-notation fallback
+            if "/" in raw and not par:
+                parts = [p.strip() for p in raw.split("/", 1)]
+                par, name = parts[0], parts[1]
+            else:
+                name = raw
+            display = f"{par} / {name}" if par else name
+            result.append({"name": name, "parent": par, "display": display})
+        return sorted(result, key=lambda x: x["display"])
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_rules() -> list:
+    """Load auto-tagging rules from the Rules sheet. Returns [] if sheet missing."""
+    try:
+        ws = _open_sheet().worksheet("Rules")
+        return ws.get_all_records()
+    except Exception:
+        return []
+
+
+def save_rule(matcher_field: str, matcher_contains: str, tag_names: str) -> bool:
+    """
+    Append a new auto-tag rule to the Rules sheet.
+    Creates the sheet (with header row) if it doesn't exist yet.
+    Returns True on success.
+    """
+    try:
+        import uuid
+        from datetime import datetime
+        ss = _open_sheet()
+        try:
+            ws = ss.worksheet("Rules")
+        except Exception:
+            ws = ss.add_worksheet("Rules", rows=1000, cols=5)
+            ws.append_row(["id", "matcher_field", "matcher_contains", "tag_names", "created_at"])
+        ws.append_row([
+            str(uuid.uuid4())[:8],
+            matcher_field,
+            matcher_contains,
+            tag_names,
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+        ])
+        load_rules.clear()
+        return True
+    except Exception as e:
+        st.error(f"Failed to save rule: {e}")
+        return False
+
+
 def fmt_inr(value: float, crore_threshold: float = 1e7) -> str:
     """Format a number as ₹X.XX Cr or ₹X,XX,XXX."""
     if abs(value) >= crore_threshold:

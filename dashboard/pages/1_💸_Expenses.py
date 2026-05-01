@@ -229,10 +229,13 @@ else:
         "amount":"Amount","account_name":"Account","tags":"Tags",
     })
 
-    # Store previous state to detect changes (auto-save on any edit)
-    prev_key = "untagged_prev_state"
-    if prev_key not in st.session_state:
-        st.session_state[prev_key] = editor_df["Tags"].tolist()
+    # Track IDs already saved this render-cycle to prevent the infinite-loop:
+    #   pick tag → rerun → editor re-renders → "change" detected again → rerun …
+    # Fix: compare against the RAW dataframe value (not session state snapshot),
+    # and gate saves on a per-ID "already saved" set that survives the rerun.
+    saved_ids_key = "expense_saved_ids"
+    if saved_ids_key not in st.session_state:
+        st.session_state[saved_ids_key] = set()
 
     edited = st.data_editor(
         editor_df.drop(columns=["id"]),
@@ -254,40 +257,46 @@ else:
         key="tag_editor",
     )
 
-    # Auto-detect changes and save immediately
+    # Build update dict: only rows where edited tag ≠ original tag in the sheet
+    # AND the ID hasn't been saved yet this session.
+    BLANK = {"", "nan", "Untagged", "None", "none"}
     updates = {}
     for i, row in edited.iterrows():
         new_tag = str(row.get("Tags", "")).strip()
-        if new_tag and new_tag not in ("", "nan", "Untagged", "None", "none"):
-            prev_tag = str(st.session_state[prev_key][i]).strip() if i < len(st.session_state[prev_key]) else ""
-            if new_tag != prev_tag:
-                txn_id = str(editor_df.iloc[i]["id"])
-                updates[txn_id] = new_tag
+        if not new_tag or new_tag in BLANK:
+            continue
+        txn_id  = str(editor_df.iloc[i]["id"])
+        orig    = str(untagged.iloc[i].get("tags", "")).strip()
+        orig    = "" if orig in BLANK else orig
+        if new_tag != orig and txn_id not in st.session_state[saved_ids_key]:
+            updates[txn_id] = new_tag
 
     if updates:
-        with st.spinner(f"Auto-saving {len(updates)} tag(s)…"):
+        with st.spinner(f"Saving {len(updates)} tag(s)…"):
             saved, failed = batch_update_tags(updates)
         if saved:
-            st.success(f"✅ Auto-saved {saved} tag(s)!")
-            st.session_state.pop(prev_key, None)   # reset for next render
+            st.session_state[saved_ids_key].update(updates.keys())
+            st.success(f"✅ Saved {saved} tag(s)!")
         if failed:
             st.warning(f"⚠️ {len(failed)} ID(s) not found: {[f[:30] for f in failed[:3]]}")
         if saved:
+            load_transactions.clear()           # bust cache so fresh data loads
+            st.session_state[saved_ids_key] = set()  # clear; fresh data has no untagged
             st.rerun()
     else:
-        # Manual save as fallback
         if st.button("💾 Save Changes", type="primary"):
-            all_updates = {}
+            # Manual save — picks up anything the auto-detect missed
+            manual = {}
             for i, row in edited.iterrows():
                 new_tag = str(row.get("Tags", "")).strip()
-                if new_tag and new_tag not in ("", "nan", "Untagged", "None", "none"):
-                    all_updates[str(editor_df.iloc[i]["id"])] = new_tag
-            if all_updates:
-                with st.spinner(f"Saving {len(all_updates)} tag(s)…"):
-                    saved, failed = batch_update_tags(all_updates)
+                if new_tag and new_tag not in BLANK:
+                    manual[str(editor_df.iloc[i]["id"])] = new_tag
+            if manual:
+                with st.spinner(f"Saving {len(manual)} tag(s)…"):
+                    saved, failed = batch_update_tags(manual)
                 if saved:
-                    st.success(f"✅ Saved {saved} tag(s)!")
-                    st.session_state.pop(prev_key, None)
+                    load_transactions.clear()
+                    st.session_state[saved_ids_key] = set()
                     st.rerun()
             else:
                 st.info("No tags selected yet — pick from the Tags column.")
