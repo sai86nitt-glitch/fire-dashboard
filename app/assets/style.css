@@ -1,0 +1,95 @@
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+body, .dash-app-content {
+  background-color: #0e0e1a !important;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+#sidebar {
+  background: #1e1e2e;
+  min-height: 100vh;
+  padding: 0;
+  border-right: 1px solid #2a2a3e;
+}
+#sidebar .nav-link {
+  color: #aaa !important;
+  border-radius: 6px;
+  margin: 2px 8px;
+  font-size: 13px;
+}
+#sidebar .nav-link:hover { background: #2a2a3e !important; color: #fff !important; }
+#sidebar .nav-link.active { background: #3a3a5e !important; color: #fff !important; }
+
+/* ── AG Grid dark ────────────────────────────────────────────────────────── */
+.ag-theme-alpine-dark {
+  --ag-background-color: #13131f;
+  --ag-odd-row-background-color: #16162a;
+  --ag-header-background-color: #1e1e2e;
+  --ag-border-color: #2a2a3e;
+  --ag-row-hover-color: #2a2a3e;
+  --ag-selected-row-background-color: #2d2d50;
+  --ag-font-size: 12px;
+  --ag-row-height: 36px;
+  --ag-header-height: 32px;
+}
+
+/* ── Detail panel ────────────────────────────────────────────────────────── */
+#txn-detail {
+  animation: slideIn 0.15s ease-out;
+  border-left: 3px solid #6c63ff;
+  background: #1a1a2e;
+  border-radius: 0 6px 6px 0;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Metric cards ────────────────────────────────────────────────────────── */
+.metric-card {
+  background: #1e1e2e;
+  border-radius: 10px;
+  padding: 16px 20px;
+  border: 1px solid #2a2a3e;
+}
+.metric-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+.metric-value { font-size: 22px; font-weight: 600; color: #e0e0e0; margin-top: 2px; }
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+.dash-dropdown .Select-control,
+.dash-dropdown .Select-menu-outer {
+  background: #2a2a3e !important;
+  border-color: #3a3a5e !important;
+  color: #e0e0e0 !important;
+}
+.dash-dropdown .Select-value-label,
+.dash-dropdown .Select-placeholder { color: #ccc !important; }
+.dash-dropdown .Select-option { background: #2a2a3e !important; color: #ccc !important; }
+.dash-dropdown .Select-option:hover { background: #3a3a5e !important; }
+
+input.dash-input, .form-control {
+  background: #2a2a3e !important;
+  border: 1px solid #3a3a5e !important;
+  color: #e0e0e0 !important;
+}
+input.dash-input::placeholder { color: #666 !important; }
+
+/* ── DatePickerRange ─────────────────────────────────────────────────────── */
+.DateInput_input {
+  background: #2a2a3e !important;
+  color: #e0e0e0 !important;
+  border-bottom: 1px solid #3a3a5e !important;
+  font-size: 12px !important;
+}
+.DateRangePickerInput { background: #2a2a3e !important; border: 1px solid #3a3a5e !important; }
+
+/* ── Amount colours ─────────────────────────────────────────────────────── */
+.amt-expense { color: #ff6b6b; }
+.amt-income  { color: #00c49f; }
+.amt-transfer { color: #ffc107; }
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #1e1e2e; }
+::-webkit-scrollbar-thumb { background: #3a3a5e; border-radius: 3px; }
