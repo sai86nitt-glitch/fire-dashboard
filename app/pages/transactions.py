@@ -26,18 +26,18 @@ dash.register_page(__name__, path="/transactions", title="Transactions")
 
 COL_DEFS = [
     {"field": "id",          "hide": True},
-    {"field": "date_str",    "headerName": "Date",        "width": 110, "pinned": "left"},
-    {"field": "amount_str",  "headerName": "Amount",      "width": 120,
+    {"field": "date_str",    "headerName": "Date",        "width": 105},
+    {"field": "amount_str",  "headerName": "Amount",      "width": 130,
      "cellStyle": {"fontFamily": "monospace"},
      "cellClassRules": {
          "amt-expense":  "params.data.type === 'expense'",
          "amt-income":   "params.data.type === 'income'",
          "amt-transfer": "params.data.type === 'transfer'",
      }},
-    {"field": "description", "headerName": "Description", "flex": 3, "minWidth": 180},
-    {"field": "tags",        "headerName": "Tags",        "flex": 1, "minWidth": 100,
+    {"field": "description", "headerName": "Description", "flex": 3, "minWidth": 160},
+    {"field": "tags",        "headerName": "Tags",        "flex": 1, "minWidth": 90,
      "cellStyle": {"color": "#888", "fontSize": "11px"}},
-    {"field": "account_name","headerName": "Account",     "flex": 1, "minWidth": 100,
+    {"field": "account_name","headerName": "Account",     "width": 110,
      "cellStyle": {"color": "#888", "fontSize": "11px"}},
 ]
 
