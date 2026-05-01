@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Full sync: Buxfer → Sheets, then Statements → Sheets, then balance correction.
+Full sync: backup → Buxfer → Statements → balance correction.
 Always run this instead of the individual scripts.
 """
 
@@ -14,6 +14,10 @@ def run(script):
     print(f"  Running {script}")
     print(f"{'='*60}\n")
     subprocess.run([sys.executable, os.path.join(BASE, script)], check=True)
+
+# ── Step 0: Back up current sheet before overwriting anything ─────────────────
+print("\n• Backing up current sheet data before sync…")
+run("backup_sheet.py")
 
 run("buxfer_to_sheets.py")
 run("statements_to_sheets.py")

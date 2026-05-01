@@ -39,9 +39,26 @@ def canonical_account(name):
 
 # Must match buxfer_to_sheets.py column order exactly so tags/type/date land
 # in the correct columns and the dashboard's tag editor works uniformly.
-TXN_HEADERS = ["id","description","amount","type","tags",
-               "date","month","year","source","account_name",
-               "buxfer_id","expense_type","transfer_from","transfer_to"]
+# Must match buxfer_to_sheets.py txn_headers exactly — both scripts write to the
+# same Transactions sheet and buxfer runs first, setting the column order.
+# Buxfer schema: id | description | amount | expense_amount | income_amount |
+#                date | type | status | account_id | account_name |
+#                tags | is_pending | transfer_from | transfer_to
+TXN_HEADERS = [
+    "id", "description", "amount", "expense_amount", "income_amount",
+    "date", "type", "status", "account_id", "account_name",
+    "tags", "is_pending", "transfer_from", "transfer_to",
+]
+
+# Column index constants (0-based) — used by transfer-collapse logic below
+COL_EXPENSE_AMT = 3
+COL_INCOME_AMT  = 4
+COL_DATE        = 5
+COL_TYPE        = 6
+COL_ACCT        = 9
+COL_TAGS        = 10
+COL_XFROM       = 12
+COL_XTO         = 13
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def get_creds():
@@ -85,22 +102,26 @@ def norm_date(s, fmt_hints=None):
 
 def make_row(date, desc, amount, is_debit, account_name):
     """
-    Build a transaction row matching the unified 14-column schema:
-    id | description | amount | type | tags | date | month | year |
-    source | account_name | buxfer_id | expense_type | transfer_from | transfer_to
+    Build a transaction row matching the BUXFER schema (14 columns):
+    id | description | amount | expense_amount | income_amount |
+    date | type | status | account_id | account_name |
+    tags | is_pending | transfer_from | transfer_to
+
+    This MUST stay aligned with buxfer_to_sheets.py txn_headers.
     """
-    signed_amt = round(amount, 2) if is_debit else round(-amount, 2)
-    txn_type   = "expense" if is_debit else "income"
-    canon_name = canonical_account(account_name)
-    row_id     = make_id(date, desc, amount, canon_name)
+    signed_amt     = round(amount, 2) if is_debit else round(-amount, 2)
+    expense_amount = round(amount, 2) if is_debit else 0
+    income_amount  = round(amount, 2) if not is_debit else 0
+    txn_type       = "expense" if is_debit else "income"
+    canon_name     = canonical_account(account_name)
+    row_id         = make_id(date, desc, amount, canon_name)
     # Apply tagging rules — may add tags or override type
     tags, eff_type, _ = apply_tagging_rules(desc, "", txn_type)
-    # Derive month / year from date string (YYYY-MM-DD)
-    month = str(date)[:7]   # "YYYY-MM"
-    year  = str(date)[:4]   # "YYYY"
-    return [row_id, desc, signed_amt, eff_type, tags,
-            date, month, year, "statement", canon_name,
-            "", "", "", ""]
+    return [
+        row_id, desc, signed_amt, expense_amount, income_amount,
+        date, eff_type, "cleared", "", canon_name,
+        tags, "false", "", "",
+    ]
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
 def parse_axis_cc_xlsx(path):
@@ -412,14 +433,11 @@ def main():
         except:
             return {d}
 
-    # Column indices for new unified schema:
-    #   0=id, 1=desc, 2=amount, 3=type, 4=tags, 5=date, 6=month, 7=year,
-    #   8=source, 9=account_name, 10=buxfer_id, 11=expense_type, 12=transfer_from, 13=transfer_to
-    COL_TYPE   = 3
-    COL_DATE   = 5
-    COL_ACCT   = 9
-    COL_XFROM  = 12
-    COL_XTO    = 13
+    # Column indices — buxfer schema (defined at module level, repeated here for clarity):
+    #   0=id, 1=desc, 2=amount, 3=expense_amount, 4=income_amount,
+    #   5=date, 6=type, 7=status, 8=account_id, 9=account_name,
+    #   10=tags, 11=is_pending, 12=transfer_from, 13=transfer_to
+    # (using module-level COL_* constants defined with TXN_HEADERS)
 
     # Index by (amount) → list of (i, date, type)
     by_amount = defaultdict(list)

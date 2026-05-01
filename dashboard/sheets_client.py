@@ -60,6 +60,13 @@ def load_transactions() -> pd.DataFrame:
     df["date"]   = pd.to_datetime(df["date"],   errors="coerce")
     df["amount"] = pd.to_numeric(df["amount"],  errors="coerce").fillna(0)
     df["month"]  = df["date"].dt.to_period("M").astype(str)
+
+    # Normalise type — clamp to known values (guards against any future schema drift)
+    VALID_TYPES = {"expense", "income", "transfer"}
+    df["type"] = df["type"].apply(
+        lambda t: t if str(t).strip() in VALID_TYPES else "expense"
+    )
+
     # Primary tag = first item in comma-separated tags field
     df["primary_tag"] = (
         df["tags"].astype(str)
