@@ -165,41 +165,36 @@ page_df    = filtered.iloc[page_start:page_end].copy().reset_index(drop=True)
 disp_df = build_display_df(page_df, tag_tree)
 
 grid_df = pd.DataFrame({
+    "_idx":        range(len(page_df)),   # used to identify selected row reliably
     "Date":        disp_df["date"].apply(
                        lambda d: d.strftime("%d %b %Y") if hasattr(d, "strftime") else str(d)),
     "Amount":      disp_df["_amount_disp"].astype(str),
     "Description": page_df["description"].astype(str),
     "Tags":        disp_df["_tags_disp"].astype(str),
     "Account":     disp_df["_account_disp"].astype(str),
-    "_row_idx":    range(len(page_df)),   # hidden — used to identify clicked row
 })
 
 # ─── AG Grid table ───────────────────────────────────────────────────────────
 
-gb = GridOptionsBuilder.from_dataframe(grid_df.drop(columns=["_row_idx"]))
+gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_selection(selection_mode="single", use_checkbox=False)
 gb.configure_default_column(
     resizable=True, sortable=False, filter=False,
     cellStyle={"fontSize": "12px"},
 )
+gb.configure_column("_idx",        hide=True)   # hidden index column
 gb.configure_column("Date",        width=110, pinned="left")
-gb.configure_column("Amount",      width=110,
+gb.configure_column("Amount",      width=120,
                     cellStyle={"fontSize": "12px", "fontFamily": "monospace"})
 gb.configure_column("Description", flex=3, minWidth=180)
 gb.configure_column("Tags",        flex=1, minWidth=100,
                     cellStyle={"color": "#aaa", "fontSize": "11px"})
 gb.configure_column("Account",     flex=1, minWidth=100,
                     cellStyle={"color": "#aaa", "fontSize": "11px"})
-gb.configure_grid_options(
-    rowHeight=36,
-    headerHeight=32,
-    suppressRowClickSelection=False,
-    rowSelection="single",
-    domLayout="normal",
-)
+gb.configure_grid_options(rowHeight=36, headerHeight=32, domLayout="normal")
 
 grid_resp = AgGrid(
-    grid_df.drop(columns=["_row_idx"]),
+    grid_df,
     gridOptions=gb.build(),
     update_mode=GridUpdateMode.SELECTION_CHANGED,
     columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE,
@@ -207,34 +202,21 @@ grid_resp = AgGrid(
     theme="streamlit",
     use_container_width=True,
     allow_unsafe_jscode=False,
-    key=f"aggrid_{page}",
+    key=f"aggrid_{page}_{total_rows}",
 )
 
-# ─── Resolve selected row ─────────────────────────────────────────────────────
+# ─── Resolve selected row via hidden _idx column ──────────────────────────────
 
-sel_rows = grid_resp.selected_rows
-sel_row_df = None
-
-if sel_rows is not None:
-    if isinstance(sel_rows, pd.DataFrame):
-        if not sel_rows.empty:
-            sel_row_df = sel_rows.iloc[0]
-    elif isinstance(sel_rows, list) and len(sel_rows) > 0:
-        sel_row_df = pd.Series(sel_rows[0])
-
-# Match selected row back to page_df by Description + Amount
 sel_page_idx = None
-if sel_row_df is not None:
-    try:
-        desc_match = str(sel_row_df.get("Description", ""))
-        amt_match  = str(sel_row_df.get("Amount", ""))
-        for i in range(len(grid_df)):
-            if (grid_df.iloc[i]["Description"] == desc_match and
-                    grid_df.iloc[i]["Amount"] == amt_match):
-                sel_page_idx = i
-                break
-    except Exception:
-        sel_page_idx = None
+try:
+    sel = grid_resp.selected_rows
+    if isinstance(sel, pd.DataFrame):
+        if not sel.empty:
+            sel_page_idx = int(sel.iloc[0]["_idx"])
+    elif isinstance(sel, list) and sel:
+        sel_page_idx = int(sel[0]["_idx"])
+except Exception:
+    sel_page_idx = None
 
 # ─── Inline expansion panel ───────────────────────────────────────────────────
 
@@ -255,17 +237,13 @@ if sel_page_idx is not None:
     to_acct    = str(row.get("transfer_to", ""))
 
     with st.container(border=True):
-        d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
-        d1.markdown(
+        acct_line = row['account_name'] + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
+        st.markdown(
             f"**{row['description']}**  \n"
-            f"<span style='color:#888;font-size:11px'>{row['account_name']}"
-            + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
-            + "</span>",
+            f"<span style='color:#888;font-size:11px'>{acct_line} &nbsp;·&nbsp; "
+            f"{date_str} &nbsp;·&nbsp; {type_icon} {amount_str} &nbsp;·&nbsp; {txn_type.capitalize()}</span>",
             unsafe_allow_html=True,
         )
-        d2.metric("Date",   date_str)
-        d3.metric("Amount", f"{type_icon} {amount_str}")
-        d4.metric("Type",   txn_type.capitalize())
 
         st.divider()
 
