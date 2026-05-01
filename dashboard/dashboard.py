@@ -125,15 +125,26 @@ with col_proj:
 
 st.divider()
 
-# ─── Monthly Spend Trend (last 12 months) ─────────────────────────────────────
-st.subheader("📈 Monthly Spend — Last 12 Months")
+# ─── Monthly Spend Trend ──────────────────────────────────────────────────────
+
+spend_col, range_col = st.columns([4, 1])
+with range_col:
+    mo_window = st.selectbox(
+        "Show", [12, 24, 36, 48, "All"],
+        index=0, label_visibility="visible",
+        key="dash_mo_window",
+    )
+
+with spend_col:
+    st.subheader(f"📈 Monthly Spend — {'Last ' + str(mo_window) + ' Months' if mo_window != 'All' else 'All Time'}")
 
 if not txn_df.empty:
-    cutoff   = pd.Timestamp.now() - pd.DateOffset(months=12)
-    exp12    = txn_df[(txn_df["type"] == "expense") & (txn_df["date"] >= cutoff)]
-    mo_spend = exp12.groupby("month")["amount"].sum().reset_index().sort_values("month")
-
-    mo_spend["amount_L"] = mo_spend["amount"] / 1e5   # convert to Lakhs
+    expenses_all = txn_df[txn_df["type"] == "expense"].copy()
+    if mo_window != "All":
+        cutoff    = pd.Timestamp.now() - pd.DateOffset(months=int(mo_window))
+        expenses_all = expenses_all[expenses_all["date"] >= cutoff]
+    mo_spend = expenses_all.groupby("month")["amount"].sum().reset_index().sort_values("month")
+    mo_spend["amount_L"] = mo_spend["amount"] / 1e5
 
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
@@ -165,6 +176,37 @@ st.divider()
 # ─── Account Health ───────────────────────────────────────────────────────────
 st.subheader("🏦 Account Health")
 
+def _parse_last_txn_date(val):
+    """Convert last_txn_date to a clean 'DD MMM YYYY' string.
+    Handles: datetime objects, 'YYYY-MM-DD HH:MM:SS' strings,
+             Excel serial integers (e.g. 45758), and blank/None.
+    """
+    if val is None or str(val).strip() in ("", "None", "nan"):
+        return "—"
+    # Try numeric Excel serial date
+    try:
+        n = int(float(str(val)))
+        if 30000 < n < 60000:   # plausible Excel date range (1982–2064)
+            from datetime import timedelta, date as _date
+            d = _date(1899, 12, 30) + timedelta(days=n)
+            return d.strftime("%d %b %Y")
+    except (ValueError, TypeError):
+        pass
+    # Try parsing as datetime string
+    try:
+        return pd.to_datetime(val).strftime("%d %b %Y")
+    except Exception:
+        return str(val)
+
+def _fmt_days_stale(val):
+    """Render days_stale as a plain integer, or '—' if missing."""
+    if val is None or str(val).strip() in ("", "None", "nan"):
+        return "—"
+    try:
+        return str(int(float(str(val))))
+    except (ValueError, TypeError):
+        return "—"
+
 if not acc_df.empty:
     display_cols = ["name", "bank", "computed_balance", "days_stale", "last_txn_date"]
     disp = acc_df[[c for c in display_cols if c in acc_df.columns]].copy()
@@ -173,14 +215,22 @@ if not acc_df.empty:
         "computed_balance": "Balance", "days_stale": "Days Stale",
         "last_txn_date": "Last Transaction",
     })
-    disp["Balance"] = disp["Balance"].apply(fmt_inr)
+    disp["Balance"]          = disp["Balance"].apply(fmt_inr)
+    disp["Days Stale"]       = disp["Days Stale"].apply(_fmt_days_stale)
+    disp["Last Transaction"] = disp["Last Transaction"].apply(_parse_last_txn_date)
+
+    # Re-derive numeric stale value for row highlighting (original column gone after fmt)
+    stale_numeric = acc_df["days_stale"].apply(
+        lambda v: float(str(v)) if str(v).strip() not in ("", "None", "nan") else 0
+    ) if "days_stale" in acc_df.columns else pd.Series([0] * len(disp))
 
     def highlight_stale(row):
+        idx = row.name
         try:
-            d = float(row.get("Days Stale", 0) or 0)
-            if d > 60:  return ["background-color: #3a1a1a"] * len(row)
-            if d > 30:  return ["background-color: #3a2a1a"] * len(row)
-        except:
+            d = stale_numeric.iloc[idx]
+            if d > 60: return ["background-color: #3a1a1a"] * len(row)
+            if d > 30: return ["background-color: #3a2a1a"] * len(row)
+        except Exception:
             pass
         return [""] * len(row)
 
