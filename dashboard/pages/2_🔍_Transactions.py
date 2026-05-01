@@ -227,7 +227,7 @@ tbl_event = st.dataframe(
     hide_index=True,
     height=min(42 * len(disp_clean) + 42, 600),   # ~40px rows + header
     on_select="rerun",
-    selection_mode=["multi-row"],
+    selection_mode="single-row",
     key="txn_table",
 )
 
@@ -289,13 +289,14 @@ if tag_clicked:
     st.session_state["editing_row_idx"]  = None if current == row_idx else row_idx
     st.session_state["expanded_row_idx"] = None
 
-# Also expand when a row is selected via table click
+# Expand immediately when a row is clicked in the table
 if selected_page_rows:
-    clicked_page_idx = selected_page_rows[-1]           # last-clicked row
+    clicked_page_idx = selected_page_rows[0]            # single-row mode: always one
     actual_idx       = page_start + clicked_page_idx    # into filtered
     if st.session_state["expanded_row_idx"] != actual_idx:
         st.session_state["expanded_row_idx"] = actual_idx
         st.session_state["editing_row_idx"]  = None
+        st.rerun()
 
 # ─── Expanded row details ────────────────────────────────────────────────────
 
