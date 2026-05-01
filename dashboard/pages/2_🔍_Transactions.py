@@ -1,8 +1,7 @@
 """
-Transactions — dense table with inline row expansion + tagging.
+Transactions — AG Grid table with inline row expansion + tagging.
 
-Click any row → compact detail panel appears immediately below the table.
-Tag the transaction right there; no separate section, no button hunting.
+Click any row → detail + tag editor appears immediately below the table.
 """
 
 import re
@@ -11,6 +10,7 @@ import pandas as pd
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, ColumnsAutoSizeMode
 from sheets_client import (
     load_transactions, load_tag_objects,
     batch_update_tags, save_rule, fmt_inr,
@@ -27,28 +27,7 @@ st.set_page_config(page_title="Transactions", page_icon="🔍", layout="wide")
 
 st.markdown("""
 <style>
-/* Strip chrome from row buttons so they look like table rows */
-div[data-testid="stButton"] button[data-testid="baseButton-secondary"] {
-    background: transparent !important;
-    border: none !important;
-    border-bottom: 1px solid #1e1e2e !important;
-    border-radius: 0 !important;
-    text-align: left !important;
-    font-size: 12px !important;
-    font-family: ui-monospace, "SF Mono", monospace !important;
-    color: #ccc !important;
-    padding: 6px 4px !important;
-    height: auto !important;
-    line-height: 1.4 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-div[data-testid="stButton"] button[data-testid="baseButton-secondary"]:hover {
-    background: #2a2a3e !important;
-    color: #fff !important;
-}
-div[data-testid="stButton"] { margin-bottom: 0 !important; }
+.stMetric label { font-size: 0.75rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,7 +58,6 @@ st.sidebar.header("Filters")
 min_date = txn_df["date"].min().date()
 max_date = txn_df["date"].max().date()
 
-# Pick up drill-through from dashboard bar click (consumed once)
 _drill_start = st.session_state.pop("txn_drill_start", None)
 _drill_end   = st.session_state.pop("txn_drill_end",   None)
 _default_range = (
@@ -92,9 +70,7 @@ if _drill_start:
     st.info(f"📅 Filtered to **{_drill_start.strftime('%b %Y')}** — adjust below to change.")
 
 date_range = st.sidebar.date_input(
-    "Date range",
-    value=_default_range,
-    min_value=min_date, max_value=max_date,
+    "Date range", value=_default_range, min_value=min_date, max_value=max_date,
 )
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_date, end_date = date_range
@@ -109,11 +85,11 @@ txn_df["type"] = txn_df["type"].apply(
 )
 
 all_types    = ["expense", "income", "transfer"]
-sel_types    = st.sidebar.multiselect("Type",     all_types,   default=all_types)
+sel_types    = st.sidebar.multiselect("Type",     all_types,    default=all_types)
 all_accounts = sorted(txn_df["account_name"].astype(str).dropna().unique().tolist())
 sel_accounts = st.sidebar.multiselect("Account",  all_accounts, default=all_accounts)
 all_cats     = sorted(txn_df["primary_tag"].dropna().unique().tolist())
-sel_cats     = st.sidebar.multiselect("Category", all_cats,    default=all_cats)
+sel_cats     = st.sidebar.multiselect("Category", all_cats,     default=all_cats)
 
 min_amt  = float(txn_df["amount"].abs().min())
 max_amt  = float(txn_df["amount"].abs().max())
@@ -124,9 +100,7 @@ untagged_only = st.sidebar.toggle("🏷️ Untagged only", value=False)
 # ─── Search ───────────────────────────────────────────────────────────────────
 
 search = st.text_input(
-    "🔎 Search description",
-    placeholder="Swiggy, Amazon, UPI…",
-    key="txn_search",
+    "🔎 Search description", placeholder="Swiggy, Amazon, UPI…", key="txn_search",
 )
 
 # ─── Filter ───────────────────────────────────────────────────────────────────
@@ -173,7 +147,6 @@ st.divider()
 
 # ─── Pagination (top) ─────────────────────────────────────────────────────────
 
-# Reset page if out of range after filter change
 max_page = max(0, (total_rows - 1) // PAGE_SIZE)
 if st.session_state["txn_page"] > max_page:
     st.session_state["txn_page"] = 0
@@ -187,115 +160,150 @@ page_start = page * PAGE_SIZE
 page_end   = min(page_start + PAGE_SIZE, total_rows)
 page_df    = filtered.iloc[page_start:page_end].copy().reset_index(drop=True)
 
-# ─── Build display data ───────────────────────────────────────────────────────
+# ─── Build display dataframe ──────────────────────────────────────────────────
 
 disp_df = build_display_df(page_df, tag_tree)
 
-# ─── Track selected row ───────────────────────────────────────────────────────
+grid_df = pd.DataFrame({
+    "Date":        disp_df["date"].apply(
+                       lambda d: d.strftime("%d %b %Y") if hasattr(d, "strftime") else str(d)),
+    "Amount":      disp_df["_amount_disp"].astype(str),
+    "Description": page_df["description"].astype(str),
+    "Tags":        disp_df["_tags_disp"].astype(str),
+    "Account":     disp_df["_account_disp"].astype(str),
+    "_row_idx":    range(len(page_df)),   # hidden — used to identify clicked row
+})
 
-if "txn_sel_idx" not in st.session_state:
-    st.session_state["txn_sel_idx"] = None
+# ─── AG Grid table ───────────────────────────────────────────────────────────
 
-# Clear selection when page or filter changes
-_page_sig = (page, total_rows)
-if st.session_state.get("_txn_page_sig") != _page_sig:
-    st.session_state["txn_sel_idx"] = None
-    st.session_state["_txn_page_sig"] = _page_sig
+gb = GridOptionsBuilder.from_dataframe(grid_df.drop(columns=["_row_idx"]))
+gb.configure_selection(selection_mode="single", use_checkbox=False)
+gb.configure_default_column(
+    resizable=True, sortable=False, filter=False,
+    cellStyle={"fontSize": "12px"},
+)
+gb.configure_column("Date",        width=110, pinned="left")
+gb.configure_column("Amount",      width=110,
+                    cellStyle={"fontSize": "12px", "fontFamily": "monospace"})
+gb.configure_column("Description", flex=3, minWidth=180)
+gb.configure_column("Tags",        flex=1, minWidth=100,
+                    cellStyle={"color": "#aaa", "fontSize": "11px"})
+gb.configure_column("Account",     flex=1, minWidth=100,
+                    cellStyle={"color": "#aaa", "fontSize": "11px"})
+gb.configure_grid_options(
+    rowHeight=36,
+    headerHeight=32,
+    suppressRowClickSelection=False,
+    rowSelection="single",
+    domLayout="normal",
+)
 
-# ─── Clickable row list ───────────────────────────────────────────────────────
-# Each row is a full-width button — tap anywhere to expand inline.
+grid_resp = AgGrid(
+    grid_df.drop(columns=["_row_idx"]),
+    gridOptions=gb.build(),
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE,
+    height=min(36 * len(grid_df) + 40, 560),
+    theme="streamlit",
+    use_container_width=True,
+    allow_unsafe_jscode=False,
+    key=f"aggrid_{page}",
+)
 
-for i in range(len(page_df)):
-    disp_row = disp_df.iloc[i]
-    raw_row  = page_df.iloc[i]
+# ─── Resolve selected row ─────────────────────────────────────────────────────
 
-    date_s = disp_row["date"].strftime("%d %b %Y") if hasattr(disp_row["date"], "strftime") else str(disp_row["date"])
-    amt_s  = str(disp_row["_amount_disp"])
-    desc_s = str(raw_row.get("description", ""))[:55]
-    tags_s = str(disp_row.get("_tags_disp", ""))
-    acct_s = str(disp_row.get("_account_disp", ""))
+sel_rows = grid_resp.selected_rows
+sel_row_df = None
 
-    label  = f"{date_s}   {amt_s}   {desc_s}"
-    is_sel = st.session_state["txn_sel_idx"] == i
+if sel_rows is not None:
+    if isinstance(sel_rows, pd.DataFrame):
+        if not sel_rows.empty:
+            sel_row_df = sel_rows.iloc[0]
+    elif isinstance(sel_rows, list) and len(sel_rows) > 0:
+        sel_row_df = pd.Series(sel_rows[0])
 
-    if st.button(label, key=f"txnr_{page_start}_{i}",
-                 use_container_width=True,
-                 type="primary" if is_sel else "secondary"):
-        st.session_state["txn_sel_idx"] = None if is_sel else i
-        st.rerun()
+# Match selected row back to page_df by Description + Amount
+sel_page_idx = None
+if sel_row_df is not None:
+    try:
+        desc_match = str(sel_row_df.get("Description", ""))
+        amt_match  = str(sel_row_df.get("Amount", ""))
+        for i in range(len(grid_df)):
+            if (grid_df.iloc[i]["Description"] == desc_match and
+                    grid_df.iloc[i]["Amount"] == amt_match):
+                sel_page_idx = i
+                break
+    except Exception:
+        sel_page_idx = None
 
-    # ── Inline expansion: appears right below the tapped row ─────────────────
-    if is_sel:
-        abs_idx = page_start + i
-        row     = raw_row
+# ─── Inline expansion panel ───────────────────────────────────────────────────
 
-        current_tag_str = str(row.get("tags", "")).strip()
-        if current_tag_str in ("", "nan", "Untagged", "None"):
-            current_tag_str = ""
-        current_paths  = resolve_tag_paths(current_tag_str, tag_tree)
-        valid_defaults = [p for p in current_paths if p in all_displays]
+if sel_page_idx is not None:
+    abs_idx = page_start + sel_page_idx
+    row     = page_df.iloc[sel_page_idx]
 
-        amount_str = fmt_inr(abs(float(row.get("amount", 0))))
-        date_str   = row["date"].strftime("%d %b %Y") if hasattr(row.get("date"), "strftime") else str(row.get("date", ""))
-        txn_type   = str(row.get("type", "expense"))
-        type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
-        to_acct    = str(row.get("transfer_to", ""))
+    current_tag_str = str(row.get("tags", "")).strip()
+    if current_tag_str in ("", "nan", "Untagged", "None"):
+        current_tag_str = ""
+    current_paths  = resolve_tag_paths(current_tag_str, tag_tree)
+    valid_defaults = [p for p in current_paths if p in all_displays]
 
-        with st.container(border=True):
-            d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
-            d1.markdown(
-                f"**{row['description']}**  \n"
-                f"<span style='color:#888;font-size:11px'>{row['account_name']}"
-                + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
-                + "</span>",
-                unsafe_allow_html=True,
+    amount_str = fmt_inr(abs(float(row.get("amount", 0))))
+    date_str   = row["date"].strftime("%d %b %Y") if hasattr(row.get("date"), "strftime") else str(row.get("date", ""))
+    txn_type   = str(row.get("type", "expense"))
+    type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
+    to_acct    = str(row.get("transfer_to", ""))
+
+    with st.container(border=True):
+        d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
+        d1.markdown(
+            f"**{row['description']}**  \n"
+            f"<span style='color:#888;font-size:11px'>{row['account_name']}"
+            + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
+            + "</span>",
+            unsafe_allow_html=True,
+        )
+        d2.metric("Date",   date_str)
+        d3.metric("Amount", f"{type_icon} {amount_str}")
+        d4.metric("Type",   txn_type.capitalize())
+
+        st.divider()
+
+        tc1, tc2 = st.columns([3, 1])
+        with tc1:
+            chosen_tags = st.multiselect(
+                "🏷️ Tags",
+                options=all_displays,
+                default=valid_defaults,
+                key=f"inline_ms_{abs_idx}",
+                placeholder="Type to search or pick a category…",
             )
-            d2.metric("Date",   date_str)
-            d3.metric("Amount", f"{type_icon} {amount_str}")
-            d4.metric("Type",   txn_type.capitalize())
-
-            st.divider()
-
-            tc1, tc2 = st.columns([3, 1])
-            with tc1:
-                chosen_tags = st.multiselect(
-                    "🏷️ Tags",
-                    options=all_displays,
-                    default=valid_defaults,
-                    key=f"inline_ms_{abs_idx}",
-                    placeholder="Type to search or pick a category…",
+            desc_clean     = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
+            words          = [w for w in desc_clean.split() if len(w) >= 3]
+            merchant_token = words[0] if words else ""
+            create_rule    = False
+            if merchant_token and chosen_tags:
+                create_rule = st.checkbox(
+                    f'🔁 Auto-tag future "{merchant_token}" transactions',
+                    key=f"inline_rule_{abs_idx}",
                 )
-                desc_clean     = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
-                words          = [w for w in desc_clean.split() if len(w) >= 3]
-                merchant_token = words[0] if words else ""
-                create_rule    = False
-                if merchant_token and chosen_tags:
-                    create_rule = st.checkbox(
-                        f'🔁 Auto-tag future "{merchant_token}" transactions',
-                        key=f"inline_rule_{abs_idx}",
-                    )
 
-            with tc2:
-                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
-                             type="primary", use_container_width=True,
-                             disabled=not chosen_tags):
-                    tags_str = ", ".join(chosen_tags)
-                    with st.spinner("Saving…"):
-                        saved, _ = batch_update_tags({str(row["id"]): tags_str})
-                    if saved:
-                        if create_rule and merchant_token:
-                            save_rule("description", merchant_token, tags_str)
-                        st.success(f"✅ {row['description'][:35]} → {tags_str}")
-                        load_transactions.clear()
-                        st.session_state["txn_sel_idx"] = None
-                        st.rerun()
-                    else:
-                        st.error("❌ Save failed — ID not found in sheet.")
-
-                if st.button("✕ Close", key=f"close_{abs_idx}", use_container_width=True):
-                    st.session_state["txn_sel_idx"] = None
+        with tc2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
+                         type="primary", use_container_width=True,
+                         disabled=not chosen_tags):
+                tags_str = ", ".join(chosen_tags)
+                with st.spinner("Saving…"):
+                    saved, _ = batch_update_tags({str(row["id"]): tags_str})
+                if saved:
+                    if create_rule and merchant_token:
+                        save_rule("description", merchant_token, tags_str)
+                    st.success(f"✅ {row['description'][:35]} → {tags_str}")
+                    load_transactions.clear()
                     st.rerun()
+                else:
+                    st.error("❌ Save failed — ID not found in sheet.")
 
 # ─── Pagination (bottom) ──────────────────────────────────────────────────────
 
