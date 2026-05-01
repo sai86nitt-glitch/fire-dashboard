@@ -1,20 +1,11 @@
 """
-Transactions — Buxfer-style dense table with inline tagging, bulk actions, pagination.
+Transactions — dense table with inline row expansion + tagging.
 
-Layout
-──────
-  Sidebar   : date, type, account, amount-range, untagged-only filters
-  Main area :
-    ① Summary metrics (4 cols)
-    ② Forecast group row (collapsible stub)
-    ③ Bulk action bar  |  Pagination (top)
-    ④ Dense transaction table  (st.dataframe, multi-row select)
-    ⑤ Pagination (bottom)
-    ⑥ Focused-row expanded details + per-row toolbar
-    ⑦ Inline tag editor  (opens when 't' pressed or ✏️ Tags clicked)
-    ⑧ Keyboard navigation JS  (j/k move the focused-row counter)
+Click any row → compact detail panel appears immediately below the table.
+Tag the transaction right there; no separate section, no button hunting.
 """
 
+import re
 import streamlit as st
 import pandas as pd
 import sys, os
@@ -26,31 +17,43 @@ from sheets_client import (
 )
 from components.transactions import (
     build_tag_tree, build_display_df,
-    tag_chips_text, resolve_tag_paths,
-    render_bulk_bar, render_pagination,
-    render_tag_editor, render_expanded_row,
-    render_forecast_group, inject_keyboard_nav,
-    fmt_raw, amount_colour, amount_css_from_glyph,
+    resolve_tag_paths,
+    render_pagination,
+    fmt_raw, amount_css_from_glyph,
 )
 
-# ─── Page config + CSS ───────────────────────────────────────────────────────
+# ─── Page config ─────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Transactions", page_icon="🔍", layout="wide")
 
 st.markdown("""
 <style>
-/* Dense table row height */
-div[data-testid="stDataFrame"] table td { padding: 4px 8px !important; font-size: 12px !important; }
-div[data-testid="stDataFrame"] table th { padding: 4px 8px !important; font-size: 11px !important;
-                                          text-transform: uppercase; letter-spacing: .04em; }
-/* Tag chip pill style (used in markdown areas) */
-.tag-pill {
-  display: inline-block; padding: 1px 7px; border-radius: 3px;
-  background: #2a2a3e; color: #aaa; font-size: 11px;
-  margin: 0 2px; border: 1px solid #3a3a5e;
+div[data-testid="stDataFrame"] table td {
+    padding: 4px 8px !important;
+    font-size: 12px !important;
 }
-/* Muted forecast rows */
-.forecast-row { opacity: 0.55; }
+div[data-testid="stDataFrame"] table th {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+/* Inline expansion panel */
+.txn-panel {
+    background: #1a1a2e;
+    border-left: 3px solid #444;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 4px 0 10px 0;
+    font-size: 12px;
+}
+.txn-panel .label {
+    color: #888;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+.txn-panel .value { color: #e0e0e0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -62,9 +65,8 @@ PAGE_SIZE = 100
 
 txn_df      = load_transactions()
 tag_objects = load_tag_objects()
-rules       = load_rules()
 tag_tree    = build_tag_tree(tag_objects)
-all_displays = sorted({t["display"] for t in tag_objects})  # for editor dropdown
+all_displays = sorted({t["display"] for t in tag_objects})
 
 if txn_df.empty:
     st.warning("No transaction data loaded.")
@@ -72,13 +74,8 @@ if txn_df.empty:
 
 # ─── Session state ────────────────────────────────────────────────────────────
 
-for key, default in [
-    ("txn_page",         0),
-    ("expanded_row_idx", None),   # index into filtered df
-    ("editing_row_idx",  None),   # index into filtered df
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
+if "txn_page" not in st.session_state:
+    st.session_state["txn_page"] = 0
 
 # ─── Sidebar filters ──────────────────────────────────────────────────────────
 
@@ -87,7 +84,7 @@ st.sidebar.header("Filters")
 min_date = txn_df["date"].min().date()
 max_date = txn_df["date"].max().date()
 
-# Pick up drill-through from dashboard bar click (consumed once, then cleared)
+# Pick up drill-through from dashboard bar click (consumed once)
 _drill_start = st.session_state.pop("txn_drill_start", None)
 _drill_end   = st.session_state.pop("txn_drill_end",   None)
 _default_range = (
@@ -97,7 +94,7 @@ _default_range = (
 )
 
 if _drill_start:
-    st.info(f"📅 Showing transactions for **{_drill_start.strftime('%b %Y')}** — adjust the date filter below to change.")
+    st.info(f"📅 Filtered to **{_drill_start.strftime('%b %Y')}** — adjust below to change.")
 
 date_range = st.sidebar.date_input(
     "Date range",
@@ -111,22 +108,20 @@ elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
 else:
     start_date, end_date = date_range, max_date
 
-# Normalise type column — some rows from the Gmail script may have month strings
-# or other garbage in the type column; clamp to known values.
 VALID_TYPES = {"expense", "income", "transfer"}
 txn_df["type"] = txn_df["type"].apply(
     lambda t: t if str(t).strip() in VALID_TYPES else "expense"
 )
 
-all_types    = ["expense", "income", "transfer"]   # fixed order, not from data
-sel_types    = st.sidebar.multiselect("Type", all_types, default=all_types)
+all_types    = ["expense", "income", "transfer"]
+sel_types    = st.sidebar.multiselect("Type",     all_types,   default=all_types)
 all_accounts = sorted(txn_df["account_name"].astype(str).dropna().unique().tolist())
-sel_accounts = st.sidebar.multiselect("Account", all_accounts, default=all_accounts)
+sel_accounts = st.sidebar.multiselect("Account",  all_accounts, default=all_accounts)
 all_cats     = sorted(txn_df["primary_tag"].dropna().unique().tolist())
-sel_cats     = st.sidebar.multiselect("Category", all_cats,   default=all_cats)
+sel_cats     = st.sidebar.multiselect("Category", all_cats,    default=all_cats)
 
-min_amt = float(txn_df["amount"].abs().min())
-max_amt = float(txn_df["amount"].abs().max())
+min_amt  = float(txn_df["amount"].abs().min())
+max_amt  = float(txn_df["amount"].abs().max())
 amt_range = st.sidebar.slider("Amount range (₹)", min_amt, max_amt, (min_amt, max_amt))
 
 untagged_only = st.sidebar.toggle("🏷️ Untagged only", value=False)
@@ -135,7 +130,7 @@ untagged_only = st.sidebar.toggle("🏷️ Untagged only", value=False)
 
 search = st.text_input(
     "🔎 Search description",
-    placeholder="Swiggy, Amazon, UPI…  (press / to focus)",
+    placeholder="Swiggy, Amazon, UPI…",
     key="txn_search",
 )
 
@@ -164,33 +159,33 @@ filtered = (
 
 total_rows = len(filtered)
 
-# Reset page if filter changed and page is now out of range
-max_page = max(0, (total_rows - 1) // PAGE_SIZE)
-if st.session_state["txn_page"] > max_page:
-    st.session_state["txn_page"] = 0
-
-# ─── Summary metrics ──────────────────────────────────────────────────────────
+# ─── Metrics ─────────────────────────────────────────────────────────────────
 
 c1, c2, c3, c4 = st.columns(4)
-exp_total = filtered[filtered["type"] == "expense"]["amount"].sum()
-inc_total = filtered[filtered["type"] == "income"]["amount"].abs().sum()
-net       = inc_total - exp_total
+exp_total  = filtered[filtered["type"] == "expense"]["amount"].sum()
+inc_total  = filtered[filtered["type"] == "income"]["amount"].abs().sum()
+net        = inc_total - exp_total
 n_untagged = filtered["tags"].astype(str).str.strip().isin(["", "nan", "Untagged"]).sum()
 
-c1.metric("Transactions",    f"{total_rows:,}")
-c2.metric("Total Expenses",  fmt_inr(exp_total))
-c3.metric("Total Income",    fmt_inr(inc_total))
-c4.metric("Net",             fmt_inr(net),
+c1.metric("Transactions",   f"{total_rows:,}")
+c2.metric("Total Expenses", fmt_inr(exp_total))
+c3.metric("Total Income",   fmt_inr(inc_total))
+c4.metric("Net",            fmt_inr(net),
           delta=f"{n_untagged} untagged" if n_untagged else "All tagged ✓",
           delta_color="inverse" if n_untagged else "normal")
 
 st.divider()
 
-# ─── Forecast group ───────────────────────────────────────────────────────────
+# ─── Pagination (top) ─────────────────────────────────────────────────────────
 
-render_forecast_group()
+# Reset page if out of range after filter change
+max_page = max(0, (total_rows - 1) // PAGE_SIZE)
+if st.session_state["txn_page"] > max_page:
+    st.session_state["txn_page"] = 0
 
-# ─── Slice current page ───────────────────────────────────────────────────────
+render_pagination(total_rows, key="txn_page_top", state_key="txn_page", page_size=PAGE_SIZE)
+
+# ─── Page slice ───────────────────────────────────────────────────────────────
 
 page       = st.session_state["txn_page"]
 page_start = page * PAGE_SIZE
@@ -199,193 +194,116 @@ page_df    = filtered.iloc[page_start:page_end].copy().reset_index(drop=True)
 
 # ─── Build display dataframe ──────────────────────────────────────────────────
 
-disp_df = build_display_df(page_df, tag_tree)
-
-# Columns shown in the table
+disp_df    = build_display_df(page_df, tag_tree)
 TABLE_COLS = {
-    "date":         st.column_config.DateColumn("Date",        format="DD MMM YYYY", width="small"),
-    "_amount_disp": st.column_config.TextColumn("Amount",      width="small"),
-    "description":  st.column_config.TextColumn("Description", width="large"),
-    "_tags_disp":   st.column_config.TextColumn("Tags",        width="medium"),
-    "_account_disp":st.column_config.TextColumn("Account",     width="medium"),
+    "date":          st.column_config.DateColumn("Date",        format="DD MMM YYYY", width="small"),
+    "_amount_disp":  st.column_config.TextColumn("Amount",      width="small"),
+    "description":   st.column_config.TextColumn("Description", width="large"),
+    "_tags_disp":    st.column_config.TextColumn("Tags",        width="medium"),
+    "_account_disp": st.column_config.TextColumn("Account",     width="medium"),
 }
-
 show_cols  = list(TABLE_COLS.keys())
 disp_clean = disp_df[show_cols].copy()
 
-# Colour the Amount column via .map() — infers colour from the glyph prefix
-# so we don't need to cross-reference page_df inside the styler.
-styled_table = disp_clean.style.map(
-    amount_css_from_glyph, subset=["_amount_disp"]
-)
+styled_table = disp_clean.style.map(amount_css_from_glyph, subset=["_amount_disp"])
 
-# ─── Bulk bar (top) + Pagination (top) ───────────────────────────────────────
-
-bar_col, pag_col = st.columns([2, 3])
-
-with bar_col:
-    # We'll know selection count after the table renders, so prime with last known
-    sel_count = len(st.session_state.get("txn_sel_rows", []))
-    bulk_action = render_bulk_bar(sel_count, key="bulk_top")
-
-with pag_col:
-    _ = render_pagination(total_rows, key="txn_page_top", state_key="txn_page", page_size=PAGE_SIZE)
-
-# ─── Main table ───────────────────────────────────────────────────────────────
+# ─── Transaction table ────────────────────────────────────────────────────────
 
 tbl_event = st.dataframe(
     styled_table,
     column_config=TABLE_COLS,
     use_container_width=True,
     hide_index=True,
-    height=min(42 * len(disp_clean) + 42, 600),   # ~40px rows + header
+    height=min(42 * len(disp_clean) + 42, 600),
     on_select="rerun",
-    selection_mode=["multi-row"],
+    selection_mode=["single-row"],   # single for clean inline UX
     key="txn_table",
 )
 
-selected_page_rows: list[int] = []
+selected_rows: list[int] = []
 if tbl_event and tbl_event.selection:
-    selected_page_rows = tbl_event.selection.rows or []
+    selected_rows = tbl_event.selection.rows or []
 
-# Persist selection count for bulk bar update on next rerun
-st.session_state["txn_sel_rows"] = selected_page_rows
+# ─── Inline expansion panel ───────────────────────────────────────────────────
+# Appears immediately below the table when a row is selected.
+# Contains full transaction details + tag editor in one place.
+
+if selected_rows:
+    sel_page_idx = selected_rows[0]                    # 0-based within page
+    abs_idx      = page_start + sel_page_idx           # 0-based within filtered
+    row          = page_df.iloc[sel_page_idx]
+
+    # Current tag state
+    current_tag_str = str(row.get("tags", "")).strip()
+    if current_tag_str in ("", "nan", "Untagged", "None"):
+        current_tag_str = ""
+    current_paths = resolve_tag_paths(current_tag_str, tag_tree)
+    valid_defaults = [p for p in current_paths if p in all_displays]
+
+    amount_str = fmt_inr(abs(float(row.get("amount", 0))))
+    date_str   = row["date"].strftime("%d %b %Y") if hasattr(row.get("date"), "strftime") else str(row.get("date", ""))
+    txn_type   = str(row.get("type", "expense"))
+    type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
+    to_acct    = str(row.get("transfer_to", ""))
+
+    with st.container(border=True):
+        # ── Details row ──────────────────────────────────────────────────────
+        d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
+        d1.markdown(f"**{row['description']}**  \n"
+                    f"<span style='color:#888;font-size:11px'>{row['account_name']}"
+                    + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
+                    + "</span>",
+                    unsafe_allow_html=True)
+        d2.metric("Date",   date_str)
+        d3.metric("Amount", f"{type_icon} {amount_str}")
+        d4.metric("Type",   txn_type.capitalize())
+
+        st.divider()
+
+        # ── Tag editor ───────────────────────────────────────────────────────
+        tc1, tc2 = st.columns([3, 1])
+
+        with tc1:
+            chosen_tags = st.multiselect(
+                "🏷️ Tags",
+                options=all_displays,
+                default=valid_defaults,
+                key=f"inline_ms_{abs_idx}",
+                placeholder="Type to search or pick a category…",
+            )
+
+            # Create Rule checkbox
+            desc_clean    = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
+            words         = [w for w in desc_clean.split() if len(w) >= 3]
+            merchant_token = words[0] if words else ""
+            create_rule   = False
+            if merchant_token and chosen_tags:
+                create_rule = st.checkbox(
+                    f'🔁 Auto-tag future transactions containing **"{merchant_token}"**',
+                    key=f"inline_rule_{abs_idx}",
+                )
+
+        with tc2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # align with multiselect
+            if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
+                         type="primary", use_container_width=True,
+                         disabled=not chosen_tags):
+                tags_str = ", ".join(chosen_tags)
+                with st.spinner("Saving…"):
+                    saved, failed = batch_update_tags({str(row["id"]): tags_str})
+                if saved:
+                    if create_rule and merchant_token:
+                        save_rule("description", merchant_token, tags_str)
+                    st.success(f"✅ Tagged **{row['description'][:40]}** → {tags_str}")
+                    load_transactions.clear()
+                    st.rerun()
+                else:
+                    st.error(f"❌ Save failed — ID not found in sheet.")
+
+            if st.button("✕ Close", key=f"close_{abs_idx}", use_container_width=True):
+                st.rerun()
 
 # ─── Pagination (bottom) ──────────────────────────────────────────────────────
 
 render_pagination(total_rows, key="txn_page_bot", state_key="txn_page", page_size=PAGE_SIZE)
-
 st.caption(f"Showing {page_start+1}–{page_end} of {total_rows:,} transactions")
-
-# ─── Focused-row navigator (keyboard nav target) ──────────────────────────────
-
-st.divider()
-st.markdown("#### Row inspector")
-
-focus_col, open_col, tag_col = st.columns([2, 1, 1])
-
-with focus_col:
-    focused_row = st.number_input(
-        "Row # (1-based, press j/k to navigate)",
-        min_value=1,
-        max_value=max(total_rows, 1),
-        value=max(1, int(st.session_state.get("expanded_row_idx") or 1)),
-        step=1,
-        key="kb_row",
-    )
-
-with open_col:
-    expand_clicked = st.button(
-        "▾ Expand  (e)",
-        key="btn_expand",
-        use_container_width=True,
-    )
-
-with tag_col:
-    tag_clicked = st.button(
-        "🏷️ Tag  (t)",
-        key="btn_tag",
-        type="primary",
-        use_container_width=True,
-    )
-
-row_idx = int(focused_row) - 1   # 0-based into filtered (not page_df)
-
-# Sync expansion state
-if expand_clicked:
-    current = st.session_state["expanded_row_idx"]
-    st.session_state["expanded_row_idx"] = None if current == row_idx else row_idx
-    st.session_state["editing_row_idx"]  = None
-
-if tag_clicked:
-    current = st.session_state["editing_row_idx"]
-    st.session_state["editing_row_idx"]  = None if current == row_idx else row_idx
-    st.session_state["expanded_row_idx"] = None
-
-# Also expand when a row is selected via table click
-if selected_page_rows:
-    clicked_page_idx = selected_page_rows[-1]           # last-clicked row
-    actual_idx       = page_start + clicked_page_idx    # into filtered
-    if st.session_state["expanded_row_idx"] != actual_idx:
-        st.session_state["expanded_row_idx"] = actual_idx
-        st.session_state["editing_row_idx"]  = None
-
-# ─── Expanded row details ────────────────────────────────────────────────────
-
-exp_idx = st.session_state.get("expanded_row_idx")
-if exp_idx is not None and 0 <= exp_idx < total_rows:
-    row_data = filtered.iloc[exp_idx]
-    action   = render_expanded_row(row_data, key=f"exp_{exp_idx}")
-    if action == "delete":
-        st.warning("⚠️ Delete not yet wired — remove from sheet manually for now.")
-        # TODO: implement delete_transaction(row_data["id"]) in sheets_client
-    elif action in ("edit", "rule", "memo"):
-        st.session_state["editing_row_idx"]  = exp_idx
-        st.session_state["expanded_row_idx"] = None
-        st.rerun()
-
-# ─── Inline tag editor ────────────────────────────────────────────────────────
-
-ed_idx = st.session_state.get("editing_row_idx")
-if ed_idx is not None and 0 <= ed_idx < total_rows:
-    row_data = filtered.iloc[ed_idx]
-
-    with st.container(border=True):
-        result = render_tag_editor(
-            row_data,
-            tag_objects,
-            tag_tree,
-            key=f"ted_{ed_idx}",
-        )
-
-    if result is not None:
-        if result.get("cancel"):
-            st.session_state["editing_row_idx"] = None
-            st.rerun()
-        else:
-            tags_str = result.get("tags", "")
-            rule     = result.get("rule")
-
-            if tags_str:
-                with st.spinner("Saving tag…"):
-                    saved, failed = batch_update_tags({str(row_data["id"]): tags_str})
-                if saved:
-                    st.success(f"✅ Tag saved: **{tags_str}**")
-                    # Save rule if requested
-                    if rule:
-                        ok = save_rule(
-                            rule["matcher_field"],
-                            rule["matcher_contains"],
-                            rule["tag_names"],
-                        )
-                        if ok:
-                            st.success(
-                                f"🔁 Rule created — future transactions containing "
-                                f"**\"{rule['matcher_contains']}\"** will be tagged "
-                                f"**{rule['tag_names']}**"
-                            )
-                    st.session_state["editing_row_idx"] = None
-                    st.rerun()
-                elif failed:
-                    st.error(f"❌ Save failed — ID not found: `{str(row_data['id'])[:60]}`")
-            else:
-                st.info("No tag chosen — pick or type one above.")
-
-# ─── Bulk action handling ────────────────────────────────────────────────────
-
-if bulk_action and selected_page_rows:
-    selected_ids = [str(page_df.iloc[i]["id"]) for i in selected_page_rows if i < len(page_df)]
-    if bulk_action == "copy":
-        st.info(f"Copied {len(selected_ids)} transaction IDs to info panel (print not yet wired).")
-    elif bulk_action == "delete":
-        st.warning(f"⚠️ Bulk delete not yet wired ({len(selected_ids)} rows selected). "
-                   "Remove from sheet manually for now.")
-        # TODO: implement bulk_delete_transactions(ids) in sheets_client
-    elif bulk_action == "edit":
-        # Open tag editor for the first selected row
-        st.session_state["editing_row_idx"] = page_start + selected_page_rows[0]
-        st.rerun()
-
-# ─── Keyboard navigation JS ──────────────────────────────────────────────────
-
-inject_keyboard_nav(total_rows, number_input_key="kb_row")
