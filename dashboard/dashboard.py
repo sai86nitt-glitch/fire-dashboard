@@ -155,7 +155,7 @@ if not txn_df.empty:
             for v in mo_spend["amount"]
         ],
         name="Monthly Spend",
-        hovertemplate="%{x}<br>₹%{customdata}",
+        hovertemplate="%{x}<br>%{customdata}<br><i>Click to view transactions</i><extra></extra>",
         customdata=mo_spend["amount"].apply(fmt_inr),
     ))
     fig2.add_hline(y=monthly_spend / 1e5, line_dash="dash", line_color="white",
@@ -166,8 +166,25 @@ if not txn_df.empty:
         font_color="white", margin=dict(t=20, b=20),
         yaxis=dict(gridcolor="#333", title="₹ Lakhs", ticksuffix=" L"),
         xaxis=dict(gridcolor="#333"),
+        clickmode="event",
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    bar_click = st.plotly_chart(fig2, use_container_width=True,
+                                on_select="rerun", key="dash_spend_bar")
+
+    # Navigate to Transactions page filtered to clicked month
+    if bar_click and bar_click.selection and bar_click.selection.points:
+        pt = bar_click.selection.points[0]
+        clicked_month = pt.get("x")   # e.g. "2025-03"
+        if clicked_month:
+            try:
+                mo_start = pd.Timestamp(clicked_month + "-01").date()
+                mo_end   = (pd.Timestamp(clicked_month + "-01") + pd.offsets.MonthEnd(0)).date()
+                st.session_state["txn_drill_start"] = mo_start
+                st.session_state["txn_drill_end"]   = mo_end
+                st.session_state["txn_page"]        = 0
+            except Exception:
+                pass
+            st.switch_page("pages/2_🔍_Transactions.py")
 else:
     st.info("No transaction data yet.")
 

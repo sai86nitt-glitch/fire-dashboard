@@ -86,9 +86,22 @@ st.sidebar.header("Filters")
 
 min_date = txn_df["date"].min().date()
 max_date = txn_df["date"].max().date()
+
+# Pick up drill-through from dashboard bar click (consumed once, then cleared)
+_drill_start = st.session_state.pop("txn_drill_start", None)
+_drill_end   = st.session_state.pop("txn_drill_end",   None)
+_default_range = (
+    (_drill_start, _drill_end)
+    if _drill_start and _drill_end
+    else [(pd.Timestamp.now() - pd.DateOffset(months=3)).date(), max_date]
+)
+
+if _drill_start:
+    st.info(f"📅 Showing transactions for **{_drill_start.strftime('%b %Y')}** — adjust the date filter below to change.")
+
 date_range = st.sidebar.date_input(
     "Date range",
-    value=[(pd.Timestamp.now() - pd.DateOffset(months=3)).date(), max_date],
+    value=_default_range,
     min_value=min_date, max_value=max_date,
 )
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
