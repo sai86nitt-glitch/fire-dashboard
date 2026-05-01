@@ -174,53 +174,74 @@ grid_df = pd.DataFrame({
     "Account":     disp_df["_account_disp"].astype(str),
 })
 
-# ─── AG Grid table ───────────────────────────────────────────────────────────
+# ─── Grid helpers ────────────────────────────────────────────────────────────
 
-gb = GridOptionsBuilder.from_dataframe(grid_df)
-gb.configure_selection(selection_mode="single", use_checkbox=False)
-gb.configure_default_column(
-    resizable=True, sortable=False, filter=False,
-    cellStyle={"fontSize": "12px"},
-)
-gb.configure_column("_idx",        hide=True)   # hidden index column
-gb.configure_column("Date",        width=110, pinned="left")
-gb.configure_column("Amount",      width=120,
-                    cellStyle={"fontSize": "12px", "fontFamily": "monospace"})
-gb.configure_column("Description", flex=3, minWidth=180)
-gb.configure_column("Tags",        flex=1, minWidth=100,
-                    cellStyle={"color": "#aaa", "fontSize": "11px"})
-gb.configure_column("Account",     flex=1, minWidth=100,
-                    cellStyle={"color": "#aaa", "fontSize": "11px"})
-gb.configure_grid_options(rowHeight=36, headerHeight=32, domLayout="normal")
+ROW_H  = 36
+HEAD_H = 32
 
-grid_resp = AgGrid(
-    grid_df,
-    gridOptions=gb.build(),
-    update_mode=GridUpdateMode.SELECTION_CHANGED,
-    columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE,
-    height=min(36 * len(grid_df) + 40, 560),
-    theme="streamlit",
-    use_container_width=True,
-    allow_unsafe_jscode=False,
-    key=f"aggrid_{page}_{total_rows}",
-)
+def _grid_options(df: pd.DataFrame, hide_header: bool = False) -> dict:
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_default_column(resizable=True, sortable=False, filter=False,
+                                cellStyle={"fontSize": "12px"})
+    gb.configure_column("_idx",        hide=True)
+    gb.configure_column("Date",        width=110, pinned="left")
+    gb.configure_column("Amount",      width=120,
+                        cellStyle={"fontSize": "12px", "fontFamily": "monospace"})
+    gb.configure_column("Description", flex=3, minWidth=180)
+    gb.configure_column("Tags",        flex=1, minWidth=100,
+                        cellStyle={"color": "#aaa", "fontSize": "11px"})
+    gb.configure_column("Account",     flex=1, minWidth=100,
+                        cellStyle={"color": "#aaa", "fontSize": "11px"})
+    gb.configure_grid_options(
+        rowHeight=ROW_H,
+        headerHeight=0 if hide_header else HEAD_H,
+        domLayout="normal",
+    )
+    return gb.build()
 
-# ─── Resolve selected row via hidden _idx column ──────────────────────────────
+def _get_idx(resp) -> int | None:
+    try:
+        sel = resp.selected_rows
+        if isinstance(sel, pd.DataFrame) and not sel.empty:
+            return int(sel.iloc[0]["_idx"])
+        if isinstance(sel, list) and sel:
+            return int(sel[0]["_idx"])
+    except Exception:
+        pass
+    return None
 
-sel_page_idx = None
-try:
-    sel = grid_resp.selected_rows
-    if isinstance(sel, pd.DataFrame):
-        if not sel.empty:
-            sel_page_idx = int(sel.iloc[0]["_idx"])
-    elif isinstance(sel, list) and sel:
-        sel_page_idx = int(sel[0]["_idx"])
-except Exception:
-    sel_page_idx = None
+def _show_grid(df, key, hide_header=False, pre_select_last=False):
+    h = ROW_H * len(df) + (0 if hide_header else HEAD_H) + 4
+    kwargs = dict(
+        gridOptions=_grid_options(df, hide_header=hide_header),
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE,
+        height=h,
+        theme="streamlit",
+        use_container_width=True,
+        key=key,
+    )
+    if pre_select_last:
+        kwargs["pre_selected_rows"] = [len(df) - 1]
+    return AgGrid(df, **kwargs)
 
-# ─── Inline expansion panel ───────────────────────────────────────────────────
+# ─── Session state for selected row ──────────────────────────────────────────
 
-if sel_page_idx is not None:
+if "txn_sel_idx" not in st.session_state:
+    st.session_state["txn_sel_idx"] = None
+
+_page_sig = (page, total_rows)
+if st.session_state.get("_txn_page_sig") != _page_sig:
+    st.session_state["txn_sel_idx"] = None
+    st.session_state["_txn_page_sig"] = _page_sig
+
+sel = st.session_state["txn_sel_idx"]
+
+# ─── Render: full grid OR split grid + inline panel ──────────────────────────
+
+def _render_panel(sel_page_idx: int):
+    """Expansion panel for the selected row."""
     abs_idx = page_start + sel_page_idx
     row     = page_df.iloc[sel_page_idx]
 
@@ -235,26 +256,28 @@ if sel_page_idx is not None:
     txn_type   = str(row.get("type", "expense"))
     type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
     to_acct    = str(row.get("transfer_to", ""))
+    acct_line  = row["account_name"] + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
 
     with st.container(border=True):
-        acct_line = row['account_name'] + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
-        st.markdown(
+        cl, cr = st.columns([8, 1])
+        cl.markdown(
             f"**{row['description']}**  \n"
             f"<span style='color:#888;font-size:11px'>{acct_line} &nbsp;·&nbsp; "
-            f"{date_str} &nbsp;·&nbsp; {type_icon} {amount_str} &nbsp;·&nbsp; {txn_type.capitalize()}</span>",
+            f"{date_str} &nbsp;·&nbsp; {type_icon} {amount_str} &nbsp;·&nbsp; "
+            f"{txn_type.capitalize()}</span>",
             unsafe_allow_html=True,
         )
+        if cr.button("✕", key=f"close_{abs_idx}"):
+            st.session_state["txn_sel_idx"] = None
+            st.rerun()
 
         st.divider()
 
         tc1, tc2 = st.columns([3, 1])
         with tc1:
             chosen_tags = st.multiselect(
-                "🏷️ Tags",
-                options=all_displays,
-                default=valid_defaults,
-                key=f"inline_ms_{abs_idx}",
-                placeholder="Type to search or pick a category…",
+                "🏷️ Tags", options=all_displays, default=valid_defaults,
+                key=f"ms_{abs_idx}", placeholder="Type to search or pick a category…",
             )
             desc_clean     = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
             words          = [w for w in desc_clean.split() if len(w) >= 3]
@@ -263,12 +286,11 @@ if sel_page_idx is not None:
             if merchant_token and chosen_tags:
                 create_rule = st.checkbox(
                     f'🔁 Auto-tag future "{merchant_token}" transactions',
-                    key=f"inline_rule_{abs_idx}",
+                    key=f"rule_{abs_idx}",
                 )
-
         with tc2:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
+            if st.button("✓ Save", key=f"save_{abs_idx}",
                          type="primary", use_container_width=True,
                          disabled=not chosen_tags):
                 tags_str = ", ".join(chosen_tags)
@@ -279,9 +301,38 @@ if sel_page_idx is not None:
                         save_rule("description", merchant_token, tags_str)
                     st.success(f"✅ {row['description'][:35]} → {tags_str}")
                     load_transactions.clear()
+                    st.session_state["txn_sel_idx"] = None
                     st.rerun()
                 else:
                     st.error("❌ Save failed — ID not found in sheet.")
+
+if sel is None:
+    # No selection: single full-height grid
+    resp = _show_grid(grid_df, key=f"ag_full_{page}_{total_rows}")
+    new = _get_idx(resp)
+    if new is not None:
+        st.session_state["txn_sel_idx"] = new
+        st.rerun()
+else:
+    # Split: rows above+selected | panel | rows below
+    top_df = grid_df.iloc[: sel + 1].copy()
+    resp_top = _show_grid(top_df, key=f"ag_top_{page}_{sel}",
+                          pre_select_last=True)
+    new = _get_idx(resp_top)
+    if new is not None and new != sel:
+        st.session_state["txn_sel_idx"] = new
+        st.rerun()
+
+    _render_panel(sel)
+
+    if sel < len(grid_df) - 1:
+        bot_df = grid_df.iloc[sel + 1:].copy()
+        resp_bot = _show_grid(bot_df, key=f"ag_bot_{page}_{sel}",
+                              hide_header=True)
+        new = _get_idx(resp_bot)
+        if new is not None:
+            st.session_state["txn_sel_idx"] = new
+            st.rerun()
 
 # ─── Pagination (bottom) ──────────────────────────────────────────────────────
 
