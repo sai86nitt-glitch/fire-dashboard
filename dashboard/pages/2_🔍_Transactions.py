@@ -12,14 +12,13 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sheets_client import (
-    load_transactions, load_tag_objects, load_rules,
+    load_transactions, load_tag_objects,
     batch_update_tags, save_rule, fmt_inr,
 )
 from components.transactions import (
     build_tag_tree, build_display_df,
     resolve_tag_paths,
     render_pagination,
-    fmt_raw, amount_css_from_glyph,
 )
 
 # ─── Page config ─────────────────────────────────────────────────────────────
@@ -28,32 +27,28 @@ st.set_page_config(page_title="Transactions", page_icon="🔍", layout="wide")
 
 st.markdown("""
 <style>
-div[data-testid="stDataFrame"] table td {
-    padding: 4px 8px !important;
+/* Strip chrome from row buttons so they look like table rows */
+div[data-testid="stButton"] button[data-testid="baseButton-secondary"] {
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 1px solid #1e1e2e !important;
+    border-radius: 0 !important;
+    text-align: left !important;
     font-size: 12px !important;
+    font-family: ui-monospace, "SF Mono", monospace !important;
+    color: #ccc !important;
+    padding: 6px 4px !important;
+    height: auto !important;
+    line-height: 1.4 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
-div[data-testid="stDataFrame"] table th {
-    padding: 4px 8px !important;
-    font-size: 11px !important;
-    text-transform: uppercase;
-    letter-spacing: .04em;
+div[data-testid="stButton"] button[data-testid="baseButton-secondary"]:hover {
+    background: #2a2a3e !important;
+    color: #fff !important;
 }
-/* Inline expansion panel */
-.txn-panel {
-    background: #1a1a2e;
-    border-left: 3px solid #444;
-    border-radius: 6px;
-    padding: 14px 18px;
-    margin: 4px 0 10px 0;
-    font-size: 12px;
-}
-.txn-panel .label {
-    color: #888;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-}
-.txn-panel .value { color: #e0e0e0; }
+div[data-testid="stButton"] { margin-bottom: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -192,116 +187,115 @@ page_start = page * PAGE_SIZE
 page_end   = min(page_start + PAGE_SIZE, total_rows)
 page_df    = filtered.iloc[page_start:page_end].copy().reset_index(drop=True)
 
-# ─── Build display dataframe ──────────────────────────────────────────────────
+# ─── Build display data ───────────────────────────────────────────────────────
 
-disp_df    = build_display_df(page_df, tag_tree)
-TABLE_COLS = {
-    "date":          st.column_config.DateColumn("Date",        format="DD MMM YYYY", width="small"),
-    "_amount_disp":  st.column_config.TextColumn("Amount",      width="small"),
-    "description":   st.column_config.TextColumn("Description", width="large"),
-    "_tags_disp":    st.column_config.TextColumn("Tags",        width="medium"),
-    "_account_disp": st.column_config.TextColumn("Account",     width="medium"),
-}
-show_cols  = list(TABLE_COLS.keys())
-disp_clean = disp_df[show_cols].copy()
+disp_df = build_display_df(page_df, tag_tree)
 
-styled_table = disp_clean.style.map(amount_css_from_glyph, subset=["_amount_disp"])
+# ─── Track selected row ───────────────────────────────────────────────────────
 
-# ─── Transaction table ────────────────────────────────────────────────────────
+if "txn_sel_idx" not in st.session_state:
+    st.session_state["txn_sel_idx"] = None
 
-tbl_event = st.dataframe(
-    styled_table,
-    column_config=TABLE_COLS,
-    use_container_width=True,
-    hide_index=True,
-    height=min(42 * len(disp_clean) + 42, 600),
-    on_select="rerun",
-    selection_mode=["single-row"],   # single for clean inline UX
-    key="txn_table",
-)
+# Clear selection when page or filter changes
+_page_sig = (page, total_rows)
+if st.session_state.get("_txn_page_sig") != _page_sig:
+    st.session_state["txn_sel_idx"] = None
+    st.session_state["_txn_page_sig"] = _page_sig
 
-selected_rows: list[int] = []
-if tbl_event and tbl_event.selection:
-    selected_rows = tbl_event.selection.rows or []
+# ─── Clickable row list ───────────────────────────────────────────────────────
+# Each row is a full-width button — tap anywhere to expand inline.
 
-# ─── Inline expansion panel ───────────────────────────────────────────────────
-# Appears immediately below the table when a row is selected.
-# Contains full transaction details + tag editor in one place.
+for i in range(len(page_df)):
+    disp_row = disp_df.iloc[i]
+    raw_row  = page_df.iloc[i]
 
-if selected_rows:
-    sel_page_idx = selected_rows[0]                    # 0-based within page
-    abs_idx      = page_start + sel_page_idx           # 0-based within filtered
-    row          = page_df.iloc[sel_page_idx]
+    date_s = disp_row["date"].strftime("%d %b %Y") if hasattr(disp_row["date"], "strftime") else str(disp_row["date"])
+    amt_s  = str(disp_row["_amount_disp"])
+    desc_s = str(raw_row.get("description", ""))[:55]
+    tags_s = str(disp_row.get("_tags_disp", ""))
+    acct_s = str(disp_row.get("_account_disp", ""))
 
-    # Current tag state
-    current_tag_str = str(row.get("tags", "")).strip()
-    if current_tag_str in ("", "nan", "Untagged", "None"):
-        current_tag_str = ""
-    current_paths = resolve_tag_paths(current_tag_str, tag_tree)
-    valid_defaults = [p for p in current_paths if p in all_displays]
+    label  = f"{date_s}   {amt_s}   {desc_s}"
+    is_sel = st.session_state["txn_sel_idx"] == i
 
-    amount_str = fmt_inr(abs(float(row.get("amount", 0))))
-    date_str   = row["date"].strftime("%d %b %Y") if hasattr(row.get("date"), "strftime") else str(row.get("date", ""))
-    txn_type   = str(row.get("type", "expense"))
-    type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
-    to_acct    = str(row.get("transfer_to", ""))
+    if st.button(label, key=f"txnr_{page_start}_{i}",
+                 use_container_width=True,
+                 type="primary" if is_sel else "secondary"):
+        st.session_state["txn_sel_idx"] = None if is_sel else i
+        st.rerun()
 
-    with st.container(border=True):
-        # ── Details row ──────────────────────────────────────────────────────
-        d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
-        d1.markdown(f"**{row['description']}**  \n"
-                    f"<span style='color:#888;font-size:11px'>{row['account_name']}"
-                    + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
-                    + "</span>",
-                    unsafe_allow_html=True)
-        d2.metric("Date",   date_str)
-        d3.metric("Amount", f"{type_icon} {amount_str}")
-        d4.metric("Type",   txn_type.capitalize())
+    # ── Inline expansion: appears right below the tapped row ─────────────────
+    if is_sel:
+        abs_idx = page_start + i
+        row     = raw_row
 
-        st.divider()
+        current_tag_str = str(row.get("tags", "")).strip()
+        if current_tag_str in ("", "nan", "Untagged", "None"):
+            current_tag_str = ""
+        current_paths  = resolve_tag_paths(current_tag_str, tag_tree)
+        valid_defaults = [p for p in current_paths if p in all_displays]
 
-        # ── Tag editor ───────────────────────────────────────────────────────
-        tc1, tc2 = st.columns([3, 1])
+        amount_str = fmt_inr(abs(float(row.get("amount", 0))))
+        date_str   = row["date"].strftime("%d %b %Y") if hasattr(row.get("date"), "strftime") else str(row.get("date", ""))
+        txn_type   = str(row.get("type", "expense"))
+        type_icon  = {"expense": "←", "income": "+", "transfer": "⇌"}.get(txn_type, "←")
+        to_acct    = str(row.get("transfer_to", ""))
 
-        with tc1:
-            chosen_tags = st.multiselect(
-                "🏷️ Tags",
-                options=all_displays,
-                default=valid_defaults,
-                key=f"inline_ms_{abs_idx}",
-                placeholder="Type to search or pick a category…",
+        with st.container(border=True):
+            d1, d2, d3, d4 = st.columns([3, 1, 1, 1])
+            d1.markdown(
+                f"**{row['description']}**  \n"
+                f"<span style='color:#888;font-size:11px'>{row['account_name']}"
+                + (f" → {to_acct}" if to_acct and to_acct not in ("", "nan") else "")
+                + "</span>",
+                unsafe_allow_html=True,
             )
+            d2.metric("Date",   date_str)
+            d3.metric("Amount", f"{type_icon} {amount_str}")
+            d4.metric("Type",   txn_type.capitalize())
 
-            # Create Rule checkbox
-            desc_clean    = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
-            words         = [w for w in desc_clean.split() if len(w) >= 3]
-            merchant_token = words[0] if words else ""
-            create_rule   = False
-            if merchant_token and chosen_tags:
-                create_rule = st.checkbox(
-                    f'🔁 Auto-tag future transactions containing **"{merchant_token}"**',
-                    key=f"inline_rule_{abs_idx}",
+            st.divider()
+
+            tc1, tc2 = st.columns([3, 1])
+            with tc1:
+                chosen_tags = st.multiselect(
+                    "🏷️ Tags",
+                    options=all_displays,
+                    default=valid_defaults,
+                    key=f"inline_ms_{abs_idx}",
+                    placeholder="Type to search or pick a category…",
                 )
+                desc_clean     = re.sub(r"[^a-zA-Z\s]", " ", str(row.get("description", ""))).strip()
+                words          = [w for w in desc_clean.split() if len(w) >= 3]
+                merchant_token = words[0] if words else ""
+                create_rule    = False
+                if merchant_token and chosen_tags:
+                    create_rule = st.checkbox(
+                        f'🔁 Auto-tag future "{merchant_token}" transactions',
+                        key=f"inline_rule_{abs_idx}",
+                    )
 
-        with tc2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # align with multiselect
-            if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
-                         type="primary", use_container_width=True,
-                         disabled=not chosen_tags):
-                tags_str = ", ".join(chosen_tags)
-                with st.spinner("Saving…"):
-                    saved, failed = batch_update_tags({str(row["id"]): tags_str})
-                if saved:
-                    if create_rule and merchant_token:
-                        save_rule("description", merchant_token, tags_str)
-                    st.success(f"✅ Tagged **{row['description'][:40]}** → {tags_str}")
-                    load_transactions.clear()
+            with tc2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("✓ Save Tag", key=f"save_tag_{abs_idx}",
+                             type="primary", use_container_width=True,
+                             disabled=not chosen_tags):
+                    tags_str = ", ".join(chosen_tags)
+                    with st.spinner("Saving…"):
+                        saved, _ = batch_update_tags({str(row["id"]): tags_str})
+                    if saved:
+                        if create_rule and merchant_token:
+                            save_rule("description", merchant_token, tags_str)
+                        st.success(f"✅ {row['description'][:35]} → {tags_str}")
+                        load_transactions.clear()
+                        st.session_state["txn_sel_idx"] = None
+                        st.rerun()
+                    else:
+                        st.error("❌ Save failed — ID not found in sheet.")
+
+                if st.button("✕ Close", key=f"close_{abs_idx}", use_container_width=True):
+                    st.session_state["txn_sel_idx"] = None
                     st.rerun()
-                else:
-                    st.error(f"❌ Save failed — ID not found in sheet.")
-
-            if st.button("✕ Close", key=f"close_{abs_idx}", use_container_width=True):
-                st.rerun()
 
 # ─── Pagination (bottom) ──────────────────────────────────────────────────────
 
