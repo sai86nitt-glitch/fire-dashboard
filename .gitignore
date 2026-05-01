@@ -2,6 +2,9 @@
 client_secret_*.json
 token.json
 
+# Streamlit secrets — contains service account private key
+dashboard/.streamlit/secrets.toml
+
 # Personal financial data — keep local only
 bankstatements/
 outputs/
