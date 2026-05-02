@@ -7,15 +7,44 @@ app = dash.Dash(
     use_pages=True,
     external_stylesheets=[dbc.themes.DARKLY],
     suppress_callback_exceptions=True,
-    title="FIRE Dashboard",
+    title="Swai Finance Dash",
+    update_title=None,
+    index_string="""<!DOCTYPE html>
+<html>
+  <head>
+    {%metas%}
+    <title>{%title%}</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+    {%css%}
+  </head>
+  <body>
+    {%app_entry%}
+    <footer>{%config%}{%scripts%}{%renderer%}</footer>
+  </body>
+</html>""",
 )
 server = app.server
 
 navbar = dbc.Navbar(
     dbc.Container([
-        dbc.NavbarBrand("🔥 FIRE", href="/",
-                        style={"fontWeight": "700", "fontSize": "18px",
-                               "color": "#e0e0e0", "letterSpacing": "0.05em"}),
+        dbc.NavbarBrand(
+            [
+                html.Img(src="/assets/logo.svg", height="32px",
+                         style={"marginRight": "8px", "verticalAlign": "middle"}),
+                html.Span("Swai", style={
+                    "fontWeight": "700", "fontSize": "18px",
+                    "color": "#e0e0e0", "letterSpacing": "0.04em",
+                    "verticalAlign": "middle",
+                }),
+                html.Span(" Finance", style={
+                    "fontWeight": "400", "fontSize": "14px",
+                    "color": "#888", "letterSpacing": "0.02em",
+                    "verticalAlign": "middle",
+                }),
+            ],
+            href="/",
+            style={"display": "flex", "alignItems": "center"},
+        ),
         dbc.Nav([
             dbc.NavLink("🏠 Dashboard",  href="/",          active="exact"),
             dbc.NavLink("💸 Expenses",   href="/expenses",  active="exact"),

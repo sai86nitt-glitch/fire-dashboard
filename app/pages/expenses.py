@@ -220,30 +220,48 @@ def update_expenses(start, end, group_by):
         _card("Top Category",    top_cat,            "#6c63ff"),
     ]
 
+    def _bar_with_values(x_vals, y_vals, hover_x=None):
+        """Bar trace that shows ₹ value labels on top of each bar."""
+        return go.Bar(
+            x=x_vals, y=y_vals,
+            marker_color="#6c63ff",
+            text=[f"₹{v/1e5:.1f}L" if v >= 1e5 else f"₹{v/1e3:.0f}K" for v in y_vals],
+            textposition="outside",
+            textfont={"size": 10, "color": "#aaa"},
+            cliponaxis=False,
+            hovertemplate=(
+                "%{text}<extra></extra>" if hover_x is None
+                else "%{x}<br>%{text}<extra></extra>"
+            ),
+        )
+
     if group_by == "month":
         agg = expenses.groupby("month")["amount"].sum().reset_index().sort_values("month")
         agg["month_label"] = agg["month"].apply(_fmt_month)
-        bar = go.Figure([go.Bar(x=agg["month"], y=agg["amount"], marker_color="#6c63ff",
-                                text=agg["month_label"], textposition="none",
-                                hovertemplate="%{text}<br>₹%{y:,.0f}<extra></extra>")])
-        bar.update_layout(title="Expenses by Month — click a bar to drill down")
+        bar = go.Figure([_bar_with_values(agg["month"], agg["amount"])])
+        bar.update_xaxes(tickvals=agg["month"], ticktext=agg["month_label"])
+        bar.update_layout(title="Expenses by Month — click a bar to drill down",
+                          yaxis={"range": [0, agg["amount"].max() * 1.18]})
     elif group_by == "category":
         agg = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False).reset_index()
-        bar = go.Figure([go.Bar(x=agg["primary_tag"], y=agg["amount"], marker_color="#6c63ff",
-                                hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>")])
-        bar.update_layout(title="Expenses by Category — click a bar to drill down")
+        bar = go.Figure([_bar_with_values(agg["primary_tag"], agg["amount"])])
+        bar.update_layout(title="Expenses by Category — click a bar to drill down",
+                          yaxis={"range": [0, agg["amount"].max() * 1.18]})
     else:
         agg = expenses.groupby("account_name")["amount"].sum().sort_values(ascending=False).reset_index()
-        bar = go.Figure([go.Bar(x=agg["account_name"], y=agg["amount"], marker_color="#6c63ff",
-                                hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>")])
-        bar.update_layout(title="Expenses by Account — click a bar to drill down")
+        bar = go.Figure([_bar_with_values(agg["account_name"], agg["amount"])])
+        bar.update_layout(title="Expenses by Account — click a bar to drill down",
+                          yaxis={"range": [0, agg["amount"].max() * 1.18]})
     _dark_fig(bar)
 
     top8 = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False).head(8).reset_index()
-    pie = go.Figure([go.Pie(labels=top8["primary_tag"], values=top8["amount"],
-                            hole=0.4, textinfo="percent",
-                            hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>")])
-    pie.update_layout(title="Category Share — click a slice")
+    pie = go.Figure([go.Pie(
+        labels=top8["primary_tag"], values=top8["amount"],
+        hole=0.4, textinfo="percent+label",
+        textfont={"size": 10},
+        hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>",
+    )])
+    pie.update_layout(title="Category Share — click a slice", showlegend=False)
     _dark_fig(pie)
 
     treemap_data = expenses.groupby(["primary_tag", "month"])["amount"].sum().reset_index()
@@ -253,7 +271,15 @@ def update_expenses(start, end, group_by):
                         values="amount", color="amount",
                         color_continuous_scale=[[0, "#1a1a2e"], [0.5, "#6c63ff"], [1, "#ff6b6b"]])
         tm.update_layout(title="Spend Breakdown — click any cell to drill down")
-        tm.update_traces(hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>")
+        tm.update_traces(
+            # Show label + short ₹ value inside each block
+            texttemplate=(
+                "<b>%{label}</b><br>"
+                "<span style='font-size:10px'>₹%{value:,.0f}</span>"
+            ),
+            textfont={"size": 11, "color": "#ffffff"},
+            hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>",
+        )
     else:
         tm = go.Figure()
     _dark_fig(tm)

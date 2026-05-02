@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" fill="none">
+  <!-- Subtle circle backdrop -->
+  <circle cx="22" cy="22" r="21" fill="#13131f"/>
+  <circle cx="22" cy="22" r="21" stroke="#6c63ff" stroke-width="0.8" opacity="0.45"/>
+
+  <!-- Ascending bars (all end at y=41) -->
+  <rect x="4"  y="29" width="9" height="12" rx="2" fill="#6c63ff" opacity="0.42"/>
+  <rect x="15" y="22" width="9" height="19" rx="2" fill="#6c63ff" opacity="0.70"/>
+  <rect x="26" y="15" width="9" height="26" rx="2" fill="#6c63ff"/>
+
+  <!-- Rising trend line through bar tops -->
+  <polyline points="8.5,29 19.5,22 30.5,15"
+            stroke="#00c49f" stroke-width="1.8"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="30.5" cy="15" r="2.2" fill="#00c49f"/>
+
+  <!-- Flame above tallest bar -->
+  <path d="M 30.5 13
+           C 28 11 27 8 29 6
+           C 29 7.5 30.5 7 30 5.5
+           C 31.5 3.5 33 4.5 32 7
+           C 34 5.5 33.5 9.5 30.5 13 Z"
+        fill="url(#fg)"/>
+
+  <defs>
+    <linearGradient id="fg" x1="0.5" y1="1" x2="0.5" y2="0">
+      <stop offset="0%"   stop-color="#ff6b6b"/>
+      <stop offset="100%" stop-color="#ffd166"/>
+    </linearGradient>
+  </defs>
+</svg>
