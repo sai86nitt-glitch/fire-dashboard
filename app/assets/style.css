@@ -29,10 +29,16 @@ body, .dash-app-content {
   --ag-border-color: #2a2a3e;
   --ag-row-hover-color: #2a2a3e;
   --ag-selected-row-background-color: #2d2d50;
+  --ag-foreground-color: #e0e0e0;
+  --ag-data-color: #e0e0e0;
+  --ag-header-foreground-color: #b0b0b0;
+  --ag-secondary-foreground-color: #aaa;
   --ag-font-size: 12px;
   --ag-row-height: 36px;
   --ag-header-height: 32px;
 }
+.ag-cell { color: #e0e0e0 !important; }
+.ag-header-cell-text { color: #b0b0b0 !important; }
 
 /* ── Detail panel ────────────────────────────────────────────────────────── */
 #txn-detail {

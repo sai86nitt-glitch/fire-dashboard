@@ -272,7 +272,7 @@ def set_page(p):
 )
 def show_detail(selected_rows, tag_opts):
     if not selected_rows:
-        return None
+        return no_update  # keep panel open; only X button closes it
     row = selected_rows[0]
 
     current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
