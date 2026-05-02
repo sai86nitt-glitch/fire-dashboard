@@ -18,6 +18,7 @@ from data import (
     batch_update_tags, save_rule,
     fmt_inr, net_worth, monthly_expense_avg,
 )
+from ai_advisor import get_portfolio_advice
 
 dash.register_page(__name__, path="/", title="Dashboard")
 
@@ -60,6 +61,9 @@ def layout():
 
     return html.Div([
         html.H3("🏠 FIRE Dashboard", style={"marginBottom": "16px"}),
+
+        # AI advice banner (hidden until loaded)
+        html.Div(id="home-ai-banner", className="mb-3"),
 
         # Metric cards
         dbc.Row(id="home-metrics", className="mb-3 g-2"),
@@ -317,6 +321,105 @@ def refresh(_n):
         )
 
     return metrics, gauge, projections, trend_fig, pie_fig, tbl
+
+# ── AI advice banner callback ─────────────────────────────────────────────────
+
+@callback(
+    Output("home-ai-banner", "children"),
+    Input("home-refresh",    "n_intervals"),
+)
+def update_ai_banner(_n):
+    txn_df = load_transactions()
+    acc_df = load_accounts()
+
+    nw      = net_worth(acc_df)
+    avg_exp = monthly_expense_avg(txn_df, months=12)
+    annual  = avg_exp * 12
+
+    # Build allocation percentages for the advisor
+    total = max(nw, 1)
+    equity_mf, epf, metals, cash = 0.0, 0.0, 0.0, 0.0
+    if not acc_df.empty:
+        for _, r in acc_df.iterrows():
+            name = str(r.get("name", "")).lower()
+            typ  = str(r.get("type", "")).lower()
+            bal  = float(r.get("computed_balance", 0) or 0)
+            if "epf" in name or "epf" in typ:
+                epf += bal
+            elif any(k in name for k in ("gold", "silver", "axisgold", "icicisilve")):
+                metals += bal
+            elif any(k in name for k in ("arbitrage", "liquid", "overnight")):
+                cash += bal
+            else:
+                equity_mf += bal
+
+    fire_target = _FIRE_MULT * annual * (1.06 ** 10)  # ~10yr inflation-adjusted
+
+    context = {
+        "nw_cr":          round(nw / 1e7, 2),
+        "fire_pct":       round(nw / fire_target * 100, 1) if fire_target else 0,
+        "equity_pct":     round(equity_mf / total * 100, 1),
+        "epf_pct":        round(epf        / total * 100, 1),
+        "metals_pct":     round(metals     / total * 100, 1),
+        "cash_pct":       round(cash       / total * 100, 1),
+        "monthly_sip":    round(avg_exp * 0.4),   # rough estimate if not tracked
+        "fire_target_cr": round(fire_target / 1e7, 2),
+        "edu_target_cr":  round(400_000 * (1.05**15) * 84 * (1.03**15) / 1e7, 2),
+        "yrs_to_fire":    10,
+        "yrs_to_edu":     15,
+    }
+
+    advice = get_portfolio_advice(context)
+
+    if advice is None:
+        # ANTHROPIC_API_KEY not set — show static rule-based nudge
+        msgs = []
+        if context["equity_pct"] > 80:
+            msgs.append(f"Equity at {context['equity_pct']}% — above 80% target ceiling; consider rebalancing")
+        if context["epf_pct"] + context["cash_pct"] < 15:
+            msgs.append("Debt allocation below 15% — EPF + cash is low")
+        if context["fire_pct"] < 15:
+            msgs.append(f"FIRE progress {context['fire_pct']}% — early stage, stay the course")
+        if not msgs:
+            msgs = ["Allocation looks balanced. Keep SIPs running."]
+        advice = {
+            "color":    "secondary",
+            "headline": "Portfolio Snapshot",
+            "points":   msgs,
+        }
+
+    color_map = {
+        "success":   ("#0d3320", "#00c49f"),
+        "warning":   ("#332b00", "#ffc107"),
+        "danger":    ("#330d0d", "#ff6b6b"),
+        "secondary": ("#1e1e2e", "#888"),
+    }
+    bg, fg = color_map.get(advice.get("color", "secondary"), color_map["secondary"])
+
+    return html.Div([
+        dbc.Row([
+            dbc.Col([
+                html.Div(advice.get("headline", ""), style={
+                    "fontWeight": "600", "fontSize": "13px",
+                    "color": fg, "marginBottom": "4px",
+                }),
+                html.Ul([
+                    html.Li(p, style={"fontSize": "12px", "color": "#ccc", "marginBottom": "2px"})
+                    for p in advice.get("points", [])
+                ], style={"paddingLeft": "18px", "margin": 0}),
+            ]),
+            dbc.Col(
+                html.Div("🤖 AI Advisor", style={"fontSize": "10px", "color": "#555",
+                                                  "textAlign": "right"}),
+                width="auto",
+            ),
+        ], className="align-items-start"),
+    ], style={
+        "background":    bg,
+        "border":        f"1px solid {fg}",
+        "borderRadius":  "8px",
+        "padding":       "12px 16px",
+    })
 
 # ── Transactions drill-down callback ──────────────────────────────────────────
 

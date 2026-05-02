@@ -17,8 +17,9 @@ navbar = dbc.Navbar(
                         style={"fontWeight": "700", "fontSize": "18px",
                                "color": "#e0e0e0", "letterSpacing": "0.05em"}),
         dbc.Nav([
-            dbc.NavLink("🏠 Dashboard", href="/",        active="exact"),
-            dbc.NavLink("💸 Expenses",  href="/expenses", active="exact"),
+            dbc.NavLink("🏠 Dashboard",  href="/",          active="exact"),
+            dbc.NavLink("💸 Expenses",   href="/expenses",  active="exact"),
+            dbc.NavLink("📊 Portfolio",  href="/portfolio", active="exact"),
         ], navbar=True, pills=True),
     ], fluid=True),
     color="#1e1e2e",
