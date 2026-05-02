@@ -50,6 +50,11 @@ def layout():
     return html.Div([
         html.H3("📊 Portfolio", style={"marginBottom": "16px"}),
 
+        # ── Accounts breakdown (shown first for transparency) ────────────────
+        dbc.Row([
+            dbc.Col(html.Div(id="port-accounts-table"), md=12),
+        ], className="mb-3"),
+
         # ── Asset allocation ─────────────────────────────────────────────────
         dbc.Row(id="port-metrics", className="mb-3 g-2"),
         dbc.Row([
@@ -58,11 +63,6 @@ def layout():
             dbc.Col(dcc.Graph(id="port-alloc-bar",  figure=_blank(),
                               config={"displayModeBar": False}), md=7),
         ], className="mb-3 g-2"),
-
-        # ── Accounts breakdown ───────────────────────────────────────────────
-        dbc.Row([
-            dbc.Col(html.Div(id="port-accounts-table"), md=12),
-        ], className="mb-3"),
 
         html.Hr(style={"borderColor": "#2a2a3e"}),
 
@@ -398,50 +398,107 @@ def refresh_portfolio(_n):
         style={"fontSize": "11px", "color": "#666", "marginTop": "4px"},
     ), md=12))
 
-    # ── Projection table ──────────────────────────────────────────────────────
+    # ── Projection + shortfall table ─────────────────────────────────────────
     this_yr = today.year
     horizons = [
-        (f"2036 ({_FIRE_YEAR - this_yr} yrs)",  _FIRE_YEAR - this_yr, fire_tgt,  "🔥 FIRE"),
-        (f"2038 ({_FIRE_YEAR - this_yr + 2} yrs)", _FIRE_YEAR - this_yr + 2, None, ""),
-        (f"2041 ({_EDU_YEAR  - this_yr} yrs)",  _EDU_YEAR  - this_yr, edu_tgt,   "🎓 Edu"),
+        (f"2036 ({_FIRE_YEAR - this_yr} yrs)",      _FIRE_YEAR - this_yr, fire_tgt, "🔥 FIRE"),
+        (f"2038 ({_FIRE_YEAR - this_yr + 2} yrs)",  _FIRE_YEAR - this_yr + 2, None, ""),
+        (f"2041 ({_EDU_YEAR  - this_yr} yrs)",      _EDU_YEAR  - this_yr, edu_tgt,  "🎓 Edu"),
     ]
+
+    def _extra_sip(gap: float, years: int, cagr: float) -> float:
+        """Monthly SIP needed to grow `gap` to zero."""
+        if gap <= 0 or years <= 0:
+            return 0.0
+        r = cagr / 12
+        n = years * 12
+        return gap * r / ((1 + r) ** n - 1) if r else gap / n
+
+    cagr_colours = ["#6c63ff", "#00c49f", "#ffc107"]
+    cagr_list    = list(_CAGR.values())
+    cagr_labels  = list(_CAGR.keys())
+
     proj_header = html.Thead(html.Tr([
-        html.Th("Year"),
-        html.Th("Goal"),
+        html.Th("Year"), html.Th("Goal"),
         html.Th("Need", style={"textAlign": "right"}),
-        *[html.Th(label, style={"textAlign": "right"}) for label in _CAGR],
+        *[html.Th(lbl, style={"textAlign": "right"}) for lbl in cagr_labels],
     ]))
+
     proj_body_rows = []
+    shortfall_rows = []   # one per goal-horizon with a target
     for label, yrs, tgt, goal_tag in horizons:
         cells = [
             html.Td(label,    style={"fontSize": "12px", "color": "#888"}),
             html.Td(goal_tag, style={"fontSize": "11px", "color": "#aaa"}),
             html.Td(fmt_inr(tgt) if tgt else "—",
-                    style={"textAlign": "right", "fontSize": "12px", "color": "#ff6b6b",
-                           "fontFamily": "monospace"}),
+                    style={"textAlign": "right", "fontSize": "12px",
+                           "color": "#ff6b6b", "fontFamily": "monospace"}),
         ]
-        cagr_colours = ["#6c63ff", "#00c49f", "#ffc107"]
-        for i, cagr in enumerate(_CAGR.values()):
-            proj = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
-            on_track = tgt is None or proj >= tgt
+        for i, cagr in enumerate(cagr_list):
+            proj      = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
+            gap       = proj - tgt if tgt else 0
+            on_track  = tgt is None or gap >= 0
+            gap_str   = "" if tgt is None else (
+                f"  ▲ {fmt_inr(gap)}" if on_track else f"  ▼ {fmt_inr(-gap)}"
+            )
             cells.append(html.Td(
-                [fmt_inr(proj), " ✓" if on_track else " ✗"],
+                [html.Div(fmt_inr(proj)),
+                 html.Div(gap_str, style={"fontSize": "10px",
+                          "color": "#00c49f" if on_track else "#ff6b6b"})],
                 style={"textAlign": "right", "fontSize": "12px",
                        "fontFamily": "monospace", "color": cagr_colours[i]},
             ))
         proj_body_rows.append(html.Tr(cells))
 
+        # Shortfall action card for goals with a target
+        if tgt:
+            action_cols = []
+            for i, (cagr_lbl, cagr) in enumerate(zip(cagr_labels, cagr_list)):
+                proj     = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
+                gap      = proj - tgt
+                surplus  = gap >= 0
+                extra    = _extra_sip(-gap, yrs, cagr)
+                action_cols.append(dbc.Col(html.Div([
+                    html.Div(cagr_lbl, className="metric-label"),
+                    html.Div(
+                        "✓ On track" if surplus else fmt_inr(-gap) + " short",
+                        style={"fontWeight": "600", "fontSize": "13px",
+                               "color": "#00c49f" if surplus else "#ff6b6b"},
+                    ),
+                    html.Div(
+                        f"Surplus {fmt_inr(gap)}" if surplus
+                        else f"Need +{fmt_inr(extra)}/mo SIP",
+                        style={"fontSize": "11px",
+                               "color": "#aaa" if surplus else "#ffc107",
+                               "marginTop": "2px"},
+                    ),
+                ], className="metric-card", style={"padding": "12px 16px"})))
+            shortfall_rows.append(html.Div([
+                html.Div(
+                    f"{goal_tag} {label} — shortfall / surplus by scenario",
+                    style={"fontSize": "12px", "color": "#aaa",
+                           "marginBottom": "8px", "marginTop": "12px"},
+                ),
+                dbc.Row(action_cols, className="g-2"),
+            ]))
+
     proj_table = html.Div([
-        html.Div("Projected corpus (current ₹ + ₹3.02 L/month SIPs)",
+        html.Div("Projected corpus at key milestones",
                  style={"color": "#aaa", "fontSize": "12px", "marginBottom": "8px",
                         "fontStyle": "italic"}),
         dbc.Table(
             [proj_header, html.Tbody(proj_body_rows)],
-            bordered=False, size="sm",
-            style={"color": "#e0e0e0"},
+            bordered=False, size="sm", style={"color": "#e0e0e0"},
         ),
-        html.Div("SIPs assumed: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = ₹3.02 L/month",
-                 style={"fontSize": "11px", "color": "#555", "marginTop": "6px"}),
+        html.Div("▲ surplus · ▼ shortfall vs goal",
+                 style={"fontSize": "10px", "color": "#555", "marginTop": "4px"}),
+        html.Hr(style={"borderColor": "#2a2a3e", "margin": "12px 0"}),
+        html.H6("Action needed to close gaps", style={"color": "#aaa", "fontSize": "12px"}),
+        *shortfall_rows,
+        html.Div(
+            f"SIPs assumed: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = ₹3.02 L/month",
+            style={"fontSize": "11px", "color": "#555", "marginTop": "12px"},
+        ),
     ])
 
     # ── SIP tracker from transactions ─────────────────────────────────────────
