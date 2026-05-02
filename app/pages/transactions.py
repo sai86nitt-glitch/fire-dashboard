@@ -389,7 +389,7 @@ def save_tag(n_clicks, chosen_tags, row_id, merchant, rule_check, row_data):
         updated.append(r)
 
     feedback = dbc.Alert(
-        f"✅ Saved: {tags_str}" + (f" + rule for "{merchant}"" if rule_check and merchant else ""),
+        f'✅ Saved: {tags_str}' + (f' + rule for "{merchant}"' if rule_check and merchant else ''),
         color="success", duration=3000,
     )
     return feedback, updated, no_update
