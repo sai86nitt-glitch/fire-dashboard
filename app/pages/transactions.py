@@ -174,7 +174,7 @@ PAGE_SIZE = 100
     Input("txn-search",      "value"),
     Input("txn-untagged",    "value"),
     Input("txn-page-store",  "data"),
-    prevent_initial_call=False,
+    prevent_initial_call="initial_duplicate",
 )
 def filter_data(start, end, types, accounts, search, untagged, page):
     df = load_transactions()
