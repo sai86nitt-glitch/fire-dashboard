@@ -35,7 +35,8 @@ _MONTHLY_METALS_SIP  =  30_000  # ₹30 K/month metals SIPs
 _MONTHLY_EPF     =  72_000      # ₹72 K/month EPF accrual
 _TOTAL_MONTHLY_SIP = _MONTHLY_EQUITY_SIP + _MONTHLY_METALS_SIP + _MONTHLY_EPF
 
-_CAGR = {"Conservative (12%)": 0.12, "Base (15%)": 0.15, "Optimistic (18%)": 0.18}
+_CAGR             = {"Conservative (12%)": 0.12, "Base (15%)": 0.15, "Optimistic (18%)": 0.18}
+_POST_FIRE_CAGR   = 0.10   # conservative 10% post-retirement (no new SIPs after 2036)
 
 
 def _blank():
@@ -126,16 +127,21 @@ def _categorise(acc_df: pd.DataFrame) -> tuple[dict, list[dict]]:
         tl    = typ.lower()
 
         # ── Determine bucket ────────────────────────────────────────────────
-        if any(k in nl for k in ("epf", "provident", " pf", "pension")) or \
-           any(k in tl for k in ("epf", "pf", "provident", "pension")):
+        # Credit/Loans FIRST so "Axis Bank CC" / "Q5 Car Loan" don't fall into savings
+        if any(k in nl for k in ("loan", " cc", "credit card", "amex", "visa", "mastercard")) or \
+           any(k in tl for k in ("credit", "credit card", "loan", "mortgage")):
+            bucket = "Credit / Loans"  # excluded from investable total
+
+        elif any(k in nl for k in ("epf", "provident", " pf", "pension")) or \
+             any(k in tl for k in ("epf", "pf", "provident", "pension")):
             bucket = "EPF / Debt"
 
-        elif any(k in nl for k in ("gold", "axisgold", "sgb", "sovereign gold")) or \
-             tl == "gold":
+        elif any(k in nl for k in (
+            "gold", "axisgold", "sgb", "sovereign gold", "digital gold",
+        )) or tl == "gold":
             bucket = "Gold"
 
-        elif any(k in nl for k in ("silver", "icicisilve", "silv")) or \
-             tl == "silver":
+        elif any(k in nl for k in ("silver", "icicisilve", "silv")) or tl == "silver":
             bucket = "Silver"
 
         elif any(k in nl for k in (
@@ -148,25 +154,39 @@ def _categorise(acc_df: pd.DataFrame) -> tuple[dict, list[dict]]:
              any(k in tl for k in ("arbitrage", "liquid")):
             bucket = "Cash / Arbitrage"
 
-        elif any(k in tl for k in ("credit", "credit card", "loan", "mortgage")) or \
-             any(k in nl for k in ("credit card", "amex", "visa", "mastercard", "emi loan")):
-            bucket = "Credit / Loans"  # excluded from investable
+        # Fixed Deposits (Buxfer FD accounts often show holder name + "fd" / "fixed")
+        elif any(k in nl for k in ("fixed deposit", " fd ", "fd-", "-fd", "swaritha")) or \
+             tl in ("fd", "fixed deposit"):
+            bucket = "FD / Debt"
 
-        elif any(k in tl for k in ("savings", "checking", "current", "salary", "bank")) or \
-             any(k in nl for k in ("savings a/c", "salary a/c", "hdfc bank", "sbi bank",
-                                   "icici bank", "kotak bank", "axis bank")):
-            bucket = "Savings / Cash"
+        # PayTM Money = mutual fund platform
+        # OneTreeHill = user's MF portfolio platform
+        # Buxfer MF folios follow "Name xxxx####" format
+        elif "paytm money" in nl or "onetreehill" in nl or "one tree" in nl:
+            bucket = "Equity MF"
 
         elif any(k in nl for k in (
             "fund", " mf", "nifty", "sensex", "midcap", "small cap", "large cap",
             "flexi", "equity", "bluechip", "balanced", "hybrid", "elss",
-            "kotak", "hdfc", "axis", "icici pru", "sbi mf", "mirae", "uti",
             "nippon", "dsp", "motilal", "tata mf", "invesco", "pgim", "franklin",
+            "mirae", "uti", "icici pru", "sbi mf",
         )) or any(k in tl for k in ("mutual", "fund", "mf", "investment", "brokerage", "etf")):
             bucket = "Equity MF"
 
+        # Buxfer imports MF folios as "Holder Name xxxx####" — multiple small accounts
+        elif "xxxx" in nl and 0 < bal < 1_000_000:
+            bucket = "Equity MF"
+
+        elif any(k in tl for k in ("savings", "checking", "current", "salary", "bank")) or \
+             any(k in nl for k in (
+                 "salary", "minor", "savings", "current a/c",
+                 "hdfc bank", "sbi bank", "icici bank", "kotak bank",
+                 "axis bank", "federal bank", "yes bank",
+             )):
+            bucket = "Savings / Cash"
+
         else:
-            # Fallback: use the actual type string so it's visible
+            # Fallback: use the actual type string so it's visible in the table
             bucket = typ if (typ and typ not in ("", "nan", "None")) else "Other"
 
         account_rows.append({
@@ -177,7 +197,7 @@ def _categorise(acc_df: pd.DataFrame) -> tuple[dict, list[dict]]:
         })
 
         # Exclude credit/loans from investable buckets
-        if bucket != "Credit / Loans":
+        if bucket not in ("Credit / Loans",):
             buckets[bucket] = buckets.get(bucket, 0) + bal
 
     return (
@@ -194,10 +214,9 @@ def _fv_corpus(current: float, monthly_sip: float, years: int, cagr: float) -> f
     return current * (1 + cagr) ** years + sip_fv
 
 
-def _fire_target(avg_monthly_exp: float, years_away: int) -> float:
-    """FIRE corpus needed in `years_away` years (inflation-adjusted spend × 25)."""
-    annual_then = avg_monthly_exp * 12 * (1 + _SPEND_INFLATION) ** years_away
-    return _FIRE_MULT * annual_then
+def _fire_target(avg_monthly_exp: float) -> float:
+    """FIRE corpus needed: 25× current annual spend (no inflation — matches stated ₹16.56 Cr)."""
+    return _FIRE_MULT * avg_monthly_exp * 12
 
 
 def _edu_target_inr(years_away: int) -> float:
@@ -287,6 +306,7 @@ def refresh_portfolio(_n):
         "Gold":             "#f0a500",
         "Silver":           "#c0a030",
         "EPF / Debt":       "#ffc107",
+        "FD / Debt":        "#e0b840",
         "Cash / Arbitrage": "#00c49f",
         "Savings / Cash":   "#26a69a",
         "Other":            "#888",
@@ -382,10 +402,11 @@ def refresh_portfolio(_n):
         ])
 
     # ── Corpus goals ──────────────────────────────────────────────────────────
-    yrs_fire = _FIRE_YEAR - today.year
-    yrs_edu  = _EDU_YEAR  - today.year
-    fire_tgt = _fire_target(avg_exp, yrs_fire)
-    edu_tgt  = _edu_target_inr(yrs_edu)
+    yrs_fire     = _FIRE_YEAR - today.year
+    yrs_edu      = _EDU_YEAR  - today.year
+    yrs_post_fire = _EDU_YEAR - _FIRE_YEAR           # = 5 yrs between FIRE and edu
+    fire_tgt     = _fire_target(avg_exp)
+    edu_tgt      = _edu_target_inr(yrs_edu)
 
     goals = [
         _progress_card("FIRE Corpus", "🔥", nw, fire_tgt, _FIRE_YEAR, "#6c63ff"),
@@ -400,11 +421,6 @@ def refresh_portfolio(_n):
 
     # ── Projection + shortfall table ─────────────────────────────────────────
     this_yr = today.year
-    horizons = [
-        (f"2036 ({_FIRE_YEAR - this_yr} yrs)",      _FIRE_YEAR - this_yr, fire_tgt, "🔥 FIRE"),
-        (f"2038 ({_FIRE_YEAR - this_yr + 2} yrs)",  _FIRE_YEAR - this_yr + 2, None, ""),
-        (f"2041 ({_EDU_YEAR  - this_yr} yrs)",      _EDU_YEAR  - this_yr, edu_tgt,  "🎓 Edu"),
-    ]
 
     def _extra_sip(gap: float, years: int, cagr: float) -> float:
         """Monthly SIP needed to grow `gap` to zero."""
@@ -418,15 +434,21 @@ def refresh_portfolio(_n):
     cagr_list    = list(_CAGR.values())
     cagr_labels  = list(_CAGR.keys())
 
+    # Projection table: 2036 (FIRE), 2038 (mid-check), 2041 (Education)
+    # Note: education is projected from the 2036 corpus at post-retirement 10%
+    # (no new SIPs after FIRE), not with 15 years of contributions
     proj_header = html.Thead(html.Tr([
-        html.Th("Year"), html.Th("Goal"),
-        html.Th("Need", style={"textAlign": "right"}),
+        html.Th("Year"), html.Th("Note"),
+        html.Th("Target", style={"textAlign": "right"}),
         *[html.Th(lbl, style={"textAlign": "right"}) for lbl in cagr_labels],
     ]))
 
     proj_body_rows = []
-    shortfall_rows = []   # one per goal-horizon with a target
-    for label, yrs, tgt, goal_tag in horizons:
+    for label, yrs, tgt, goal_tag, use_post_fire in [
+        (f"2036 ({yrs_fire} yrs)",  yrs_fire,  fire_tgt, "🔥 FIRE", False),
+        (f"2038 ({yrs_fire+2} yrs)", yrs_fire+2, None,    "",        False),
+        (f"2041 ({yrs_edu} yrs)",   yrs_edu,   edu_tgt,  "🎓 Edu",  True),
+    ]:
         cells = [
             html.Td(label,    style={"fontSize": "12px", "color": "#888"}),
             html.Td(goal_tag, style={"fontSize": "11px", "color": "#aaa"}),
@@ -435,10 +457,15 @@ def refresh_portfolio(_n):
                            "color": "#ff6b6b", "fontFamily": "monospace"}),
         ]
         for i, cagr in enumerate(cagr_list):
-            proj      = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
-            gap       = proj - tgt if tgt else 0
-            on_track  = tgt is None or gap >= 0
-            gap_str   = "" if tgt is None else (
+            if use_post_fire:
+                # Edu: grow 2036 corpus at _POST_FIRE_CAGR for 5 years (no SIPs after FIRE)
+                corpus_at_fire = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
+                proj = corpus_at_fire * (1 + _POST_FIRE_CAGR) ** yrs_post_fire
+            else:
+                proj = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
+            gap      = proj - tgt if tgt else 0
+            on_track = tgt is None or gap >= 0
+            gap_str  = "" if tgt is None else (
                 f"  ▲ {fmt_inr(gap)}" if on_track else f"  ▼ {fmt_inr(-gap)}"
             )
             cells.append(html.Td(
@@ -450,37 +477,53 @@ def refresh_portfolio(_n):
             ))
         proj_body_rows.append(html.Tr(cells))
 
-        # Shortfall action card for goals with a target
-        if tgt:
-            action_cols = []
-            for i, (cagr_lbl, cagr) in enumerate(zip(cagr_labels, cagr_list)):
-                proj     = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
-                gap      = proj - tgt
-                surplus  = gap >= 0
-                extra    = _extra_sip(-gap, yrs, cagr)
-                action_cols.append(dbc.Col(html.Div([
-                    html.Div(cagr_lbl, className="metric-label"),
-                    html.Div(
-                        "✓ On track" if surplus else fmt_inr(-gap) + " short",
-                        style={"fontWeight": "600", "fontSize": "13px",
-                               "color": "#00c49f" if surplus else "#ff6b6b"},
-                    ),
-                    html.Div(
-                        f"Surplus {fmt_inr(gap)}" if surplus
-                        else f"Need +{fmt_inr(extra)}/mo SIP",
-                        style={"fontSize": "11px",
-                               "color": "#aaa" if surplus else "#ffc107",
-                               "marginTop": "2px"},
-                    ),
-                ], className="metric-card", style={"padding": "12px 16px"})))
-            shortfall_rows.append(html.Div([
+    # Shortfall cards — FIRE and Education use different projection logic
+    def _shortfall_card_row(goal_tag, label, tgt, yrs, use_post_fire):
+        action_cols = []
+        for i, (cagr_lbl, cagr) in enumerate(zip(cagr_labels, cagr_list)):
+            if use_post_fire:
+                corpus_at_fire = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
+                proj = corpus_at_fire * (1 + _POST_FIRE_CAGR) ** yrs_post_fire
+                extra_note = f"From 2036 corpus at {int(_POST_FIRE_CAGR*100)}%/yr"
+            else:
+                proj = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
+                extra_note = None
+            gap     = proj - tgt
+            surplus = gap >= 0
+            extra   = _extra_sip(-gap, yrs, cagr) if not surplus and not use_post_fire else 0
+            action_cols.append(dbc.Col(html.Div([
+                html.Div(cagr_lbl, className="metric-label"),
                 html.Div(
-                    f"{goal_tag} {label} — shortfall / surplus by scenario",
-                    style={"fontSize": "12px", "color": "#aaa",
-                           "marginBottom": "8px", "marginTop": "12px"},
+                    "✓ On track" if surplus else fmt_inr(-gap) + " short",
+                    style={"fontWeight": "600", "fontSize": "13px",
+                           "color": "#00c49f" if surplus else "#ff6b6b"},
                 ),
-                dbc.Row(action_cols, className="g-2"),
-            ]))
+                html.Div(
+                    (f"Surplus {fmt_inr(gap)}" if surplus
+                     else (f"Need +{fmt_inr(extra)}/mo extra SIP"
+                           if extra else f"Gap {fmt_inr(-gap)}")),
+                    style={"fontSize": "11px",
+                           "color": "#aaa" if surplus else "#ffc107",
+                           "marginTop": "2px"},
+                ),
+                *([] if not extra_note else [
+                    html.Div(extra_note,
+                             style={"fontSize": "10px", "color": "#555", "marginTop": "2px"})
+                ]),
+            ], className="metric-card", style={"padding": "12px 16px"})))
+        return html.Div([
+            html.Div(
+                f"{goal_tag} {label}",
+                style={"fontSize": "12px", "color": "#aaa",
+                       "marginBottom": "8px", "marginTop": "12px"},
+            ),
+            dbc.Row(action_cols, className="g-2"),
+        ])
+
+    shortfall_rows = [
+        _shortfall_card_row("🔥 FIRE",         f"2036 ({yrs_fire} yrs)",  fire_tgt, yrs_fire, False),
+        _shortfall_card_row("🎓 Education", f"2041 — from 2036 corpus", edu_tgt,  yrs_edu,  True),
+    ]
 
     proj_table = html.Div([
         html.Div("Projected corpus at key milestones",
@@ -490,13 +533,14 @@ def refresh_portfolio(_n):
             [proj_header, html.Tbody(proj_body_rows)],
             bordered=False, size="sm", style={"color": "#e0e0e0"},
         ),
-        html.Div("▲ surplus · ▼ shortfall vs goal",
+        html.Div("▲ surplus · ▼ shortfall vs target  |  Education: corpus grows post-FIRE at 10%/yr (no new SIPs)",
                  style={"fontSize": "10px", "color": "#555", "marginTop": "4px"}),
         html.Hr(style={"borderColor": "#2a2a3e", "margin": "12px 0"}),
-        html.H6("Action needed to close gaps", style={"color": "#aaa", "fontSize": "12px"}),
+        html.H6("Goal status by scenario", style={"color": "#aaa", "fontSize": "12px"}),
         *shortfall_rows,
         html.Div(
-            f"SIPs assumed: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = ₹3.02 L/month",
+            f"SIPs assumed until FIRE 2036: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = ₹3.02 L/month. "
+            f"Post-FIRE, corpus grows at {int(_POST_FIRE_CAGR*100)}%/yr with no new contributions.",
             style={"fontSize": "11px", "color": "#555", "marginTop": "12px"},
         ),
     ])

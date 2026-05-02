@@ -348,7 +348,12 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
 
     rows    = _to_rows(expenses)
     caption = f"{len(rows):,} transactions · click a row to view / edit tags"
-    return rows, label, caption, None
+    # Only close the detail panel when user explicitly changed the filter via a
+    # chart click or Clear — not on passive date/group-by changes (which would
+    # wipe an open tag editor on mobile just from page initialisation).
+    _EXPLICIT_TRIGGERS = {"exp-bar", "exp-pie", "exp-treemap", "exp-txn-clear"}
+    close_panel = triggered in _EXPLICIT_TRIGGERS
+    return rows, label, caption, (None if close_panel else no_update)
 
 # ── Row click → inline tag editor ────────────────────────────────────────────
 

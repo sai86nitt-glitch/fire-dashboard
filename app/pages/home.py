@@ -461,7 +461,9 @@ def drill_transactions(trend_click, pie_click, _clear, _refresh):
 
     rows    = _to_rows(txns)
     caption = f"{len(rows):,} transactions · click a row to view / edit tags"
-    return rows, label, caption, None
+    _EXPLICIT_TRIGGERS = {"home-spend-trend", "home-category-pie", "home-txn-clear"}
+    close_panel = triggered in _EXPLICIT_TRIGGERS
+    return rows, label, caption, (None if close_panel else no_update)
 
 # ── Row click → inline tag editor ────────────────────────────────────────────
 
