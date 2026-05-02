@@ -59,6 +59,11 @@ def layout():
                               config={"displayModeBar": False}), md=7),
         ], className="mb-3 g-2"),
 
+        # ── Accounts breakdown ───────────────────────────────────────────────
+        dbc.Row([
+            dbc.Col(html.Div(id="port-accounts-table"), md=12),
+        ], className="mb-3"),
+
         html.Hr(style={"borderColor": "#2a2a3e"}),
 
         # ── Corpus goals ─────────────────────────────────────────────────────
@@ -103,38 +108,82 @@ def _card(label, value, colour="#e0e0e0", sub=None):
     return dbc.Col(html.Div(children, className="metric-card"), md=3)
 
 
-def _categorise(acc_df: pd.DataFrame) -> dict:
-    """Map account rows to asset-class buckets."""
-    buckets: dict[str, float] = {
-        "Equity MF": 0.0,
-        "International": 0.0,
-        "Gold": 0.0,
-        "Silver": 0.0,
-        "EPF": 0.0,
-        "Cash / Arbitrage": 0.0,
-        "Other": 0.0,
-    }
+def _categorise(acc_df: pd.DataFrame) -> tuple[dict, list[dict]]:
+    """
+    Map account rows to asset-class buckets.
+    Returns (buckets_dict, account_rows_for_debug_table).
+    Uses actual 'type' field + broad keyword matching on name.
+    Credit/loan accounts are excluded from investable total.
+    """
+    buckets: dict[str, float] = {}
+    account_rows: list[dict] = []
+
     for _, row in acc_df.iterrows():
-        name = str(row.get("name", "")).lower()
-        typ  = str(row.get("type", "")).lower()
-        bal  = float(row.get("computed_balance", 0) or 0)
-        if bal <= 0:
-            continue
-        if "epf" in name or "epf" in typ:
-            buckets["EPF"] += bal
-        elif "silver" in name or "icicisilve" in name:
-            buckets["Silver"] += bal
-        elif "gold" in name or "axisgold" in name:
-            buckets["Gold"] += bal
-        elif any(k in name for k in ("nasdaq", "international", "parag parikh", "motilal")):
-            buckets["International"] += bal
-        elif any(k in name for k in ("arbitrage", "liquid", "overnight")):
-            buckets["Cash / Arbitrage"] += bal
-        elif any(k in typ for k in ("mutual", "equity", "fund", "mf", "etf")):
-            buckets["Equity MF"] += bal
+        name  = str(row.get("name", "")).strip()
+        typ   = str(row.get("type", "")).strip()
+        bal   = float(row.get("computed_balance", 0) or 0)
+        nl    = name.lower()
+        tl    = typ.lower()
+
+        # ── Determine bucket ────────────────────────────────────────────────
+        if any(k in nl for k in ("epf", "provident", " pf", "pension")) or \
+           any(k in tl for k in ("epf", "pf", "provident", "pension")):
+            bucket = "EPF / Debt"
+
+        elif any(k in nl for k in ("gold", "axisgold", "sgb", "sovereign gold")) or \
+             tl == "gold":
+            bucket = "Gold"
+
+        elif any(k in nl for k in ("silver", "icicisilve", "silv")) or \
+             tl == "silver":
+            bucket = "Silver"
+
+        elif any(k in nl for k in (
+            "nasdaq", "s&p 500", "sp500", "global", "international",
+            "overseas", "us equity", "world", "parag parikh",
+        )) or "international" in tl:
+            bucket = "International MF"
+
+        elif any(k in nl for k in ("arbitrage", "liquid fund", "overnight", "money market")) or \
+             any(k in tl for k in ("arbitrage", "liquid")):
+            bucket = "Cash / Arbitrage"
+
+        elif any(k in tl for k in ("credit", "credit card", "loan", "mortgage")) or \
+             any(k in nl for k in ("credit card", "amex", "visa", "mastercard", "emi loan")):
+            bucket = "Credit / Loans"  # excluded from investable
+
+        elif any(k in tl for k in ("savings", "checking", "current", "salary", "bank")) or \
+             any(k in nl for k in ("savings a/c", "salary a/c", "hdfc bank", "sbi bank",
+                                   "icici bank", "kotak bank", "axis bank")):
+            bucket = "Savings / Cash"
+
+        elif any(k in nl for k in (
+            "fund", " mf", "nifty", "sensex", "midcap", "small cap", "large cap",
+            "flexi", "equity", "bluechip", "balanced", "hybrid", "elss",
+            "kotak", "hdfc", "axis", "icici pru", "sbi mf", "mirae", "uti",
+            "nippon", "dsp", "motilal", "tata mf", "invesco", "pgim", "franklin",
+        )) or any(k in tl for k in ("mutual", "fund", "mf", "investment", "brokerage", "etf")):
+            bucket = "Equity MF"
+
         else:
-            buckets["Other"] += bal
-    return {k: v for k, v in buckets.items() if v > 0}
+            # Fallback: use the actual type string so it's visible
+            bucket = typ if (typ and typ not in ("", "nan", "None")) else "Other"
+
+        account_rows.append({
+            "name":   name,
+            "type":   typ or "—",
+            "bucket": bucket,
+            "bal":    bal,
+        })
+
+        # Exclude credit/loans from investable buckets
+        if bucket != "Credit / Loans":
+            buckets[bucket] = buckets.get(bucket, 0) + bal
+
+    return (
+        {k: v for k, v in sorted(buckets.items(), key=lambda x: -x[1]) if v > 0},
+        account_rows,
+    )
 
 
 def _fv_corpus(current: float, monthly_sip: float, years: int, cagr: float) -> float:
@@ -194,12 +243,13 @@ def _progress_card(title: str, icon: str, current: float, target: float,
 @callback(
     Output("port-metrics",         "children"),
     Output("port-alloc-pie",       "figure"),
-    Output("port-alloc-bar",       "figure"),
-    Output("port-goals",           "children"),
-    Output("port-projection-table","children"),
-    Output("port-sip",             "children"),
-    Output("port-sip-trend",       "figure"),
-    Input("port-refresh",          "n_intervals"),
+    Output("port-alloc-bar",        "figure"),
+    Output("port-accounts-table",   "children"),
+    Output("port-goals",            "children"),
+    Output("port-projection-table", "children"),
+    Output("port-sip",              "children"),
+    Output("port-sip-trend",        "figure"),
+    Input("port-refresh",           "n_intervals"),
 )
 def refresh_portfolio(_n):
     txn_df = load_transactions()
@@ -208,12 +258,12 @@ def refresh_portfolio(_n):
 
     nw         = net_worth(acc_df)
     avg_exp    = monthly_expense_avg(txn_df, months=12)
-    buckets    = _categorise(acc_df) if not acc_df.empty else {}
+    buckets, account_rows = _categorise(acc_df) if not acc_df.empty else ({}, [])
     total_inv  = sum(buckets.values()) or nw
-    equity_mf  = buckets.get("Equity MF", 0) + buckets.get("International", 0)
-    epf        = buckets.get("EPF", 0)
+    equity_mf  = buckets.get("Equity MF", 0) + buckets.get("International MF", 0)
+    epf        = buckets.get("EPF / Debt", 0)
     metals     = buckets.get("Gold", 0) + buckets.get("Silver", 0)
-    cash       = buckets.get("Cash / Arbitrage", 0)
+    cash       = buckets.get("Cash / Arbitrage", 0) + buckets.get("Savings / Cash", 0)
 
     # ── Metric cards ─────────────────────────────────────────────────────────
     equity_pct = equity_mf / total_inv * 100 if total_inv else 0
@@ -223,35 +273,48 @@ def refresh_portfolio(_n):
     metrics = [
         _card("Total Investable", fmt_inr(total_inv), "#00c49f"),
         _card("Equity MF",        fmt_inr(equity_mf), "#6c63ff",
-              sub=f"{equity_pct:.1f}% of portfolio"),
-        _card("EPF (Debt)",       fmt_inr(epf),        "#ffc107",
+              sub=f"{equity_pct:.1f}% · target 70-75%"),
+        _card("EPF / Debt",       fmt_inr(epf),        "#ffc107",
               sub=f"{epf_pct:.1f}% · target 20-25%"),
         _card("Metals",           fmt_inr(metals),     "#f0a500",
               sub=f"{metals_pct:.1f}% · target 5-8%"),
     ]
 
     # ── Allocation pie ────────────────────────────────────────────────────────
-    colours = ["#6c63ff", "#4a90d9", "#f0a500", "#c0a030",
-               "#ffc107", "#00c49f", "#888"]
+    _BUCKET_COLOURS = {
+        "Equity MF":        "#6c63ff",
+        "International MF": "#4a90d9",
+        "Gold":             "#f0a500",
+        "Silver":           "#c0a030",
+        "EPF / Debt":       "#ffc107",
+        "Cash / Arbitrage": "#00c49f",
+        "Savings / Cash":   "#26a69a",
+        "Other":            "#888",
+    }
+    bucket_labels  = list(buckets.keys())
+    bucket_vals    = list(buckets.values())
+    bucket_colours = [_BUCKET_COLOURS.get(lbl, "#aaa") for lbl in bucket_labels]
+
     pie = go.Figure([go.Pie(
-        labels=list(buckets.keys()),
-        values=list(buckets.values()),
+        labels=bucket_labels,
+        values=bucket_vals,
         hole=0.42,
         textinfo="percent+label",
-        marker_colors=colours[:len(buckets)],
+        textfont={"size": 10},
+        marker_colors=bucket_colours,
         hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
     )])
-    pie.update_layout(title="Asset Allocation", showlegend=False)
+    pie.update_layout(title="Asset Allocation (by detected category)", showlegend=False)
     _dark_fig(pie)
 
     # ── Actual vs target bar ──────────────────────────────────────────────────
     _TARGETS = {
-        "Equity MF":      (70, 75),
-        "International":  (10, 15),   # of equity
-        "Gold":           (3,  5),
-        "Silver":         (2,  3),
-        "EPF":            (20, 25),
-        "Cash / Arbitrage": (0, 5),
+        "Equity MF":        (65, 75),
+        "International MF": (8,  15),
+        "Gold":             (3,   5),
+        "Silver":           (2,   3),
+        "EPF / Debt":       (20, 25),
+        "Cash / Arbitrage": (0,   5),
     }
     bar_cats, bar_actual, bar_lo, bar_hi = [], [], [], []
     for cat, (lo, hi) in _TARGETS.items():
@@ -264,22 +327,59 @@ def refresh_portfolio(_n):
 
     alloc_bar = go.Figure([
         go.Bar(name="Actual %",    x=bar_cats, y=bar_actual,
-               marker_color="#6c63ff",
+               marker_color="#6c63ff", text=[f"{v:.1f}%" for v in bar_actual],
+               textposition="outside", textfont={"size": 10, "color": "#aaa"},
+               cliponaxis=False,
                hovertemplate="%{x}: %{y:.1f}%<extra></extra>"),
-        go.Scatter(name="Target low",  x=bar_cats, y=bar_lo,
-                   mode="markers", marker=dict(symbol="line-ew", size=14,
+        go.Scatter(name="Target min",  x=bar_cats, y=bar_lo,
+                   mode="markers", marker=dict(symbol="line-ew", size=16,
                    color="#00c49f", line=dict(width=2, color="#00c49f")),
-                   hovertemplate="Min target: %{y}%<extra></extra>"),
-        go.Scatter(name="Target high", x=bar_cats, y=bar_hi,
-                   mode="markers", marker=dict(symbol="line-ew", size=14,
+                   hovertemplate="Min: %{y}%<extra></extra>"),
+        go.Scatter(name="Target max", x=bar_cats, y=bar_hi,
+                   mode="markers", marker=dict(symbol="line-ew", size=16,
                    color="#ff6b6b", line=dict(width=2, color="#ff6b6b")),
-                   hovertemplate="Max target: %{y}%<extra></extra>"),
+                   hovertemplate="Max: %{y}%<extra></extra>"),
     ])
-    alloc_bar.update_layout(title="Allocation vs Target Band",
-                            barmode="group", showlegend=True,
-                            legend=dict(orientation="h", yanchor="bottom",
-                                        y=1.02, xanchor="right", x=1))
+    alloc_bar.update_layout(
+        title="Allocation vs Target Band",
+        barmode="group", showlegend=True,
+        yaxis={"range": [0, max(bar_hi) * 1.3 if bar_hi else 100]},
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
     _dark_fig(alloc_bar)
+
+    # ── Accounts breakdown table ─────────────────────────────────────────────
+    if not account_rows:
+        acct_table = html.P("No account data.", style={"color": "#666"})
+    else:
+        tbl_rows = []
+        for r in sorted(account_rows, key=lambda x: -abs(x["bal"])):
+            col = "#00c49f" if r["bal"] > 0 else "#ff6b6b"
+            tbl_rows.append(html.Tr([
+                html.Td(r["name"],   style={"fontSize": "12px", "color": "#e0e0e0"}),
+                html.Td(r["type"],   style={"fontSize": "11px", "color": "#888"}),
+                html.Td(r["bucket"], style={"fontSize": "11px", "color": "#6c63ff"}),
+                html.Td(fmt_inr(r["bal"]),
+                        style={"textAlign": "right", "fontFamily": "monospace",
+                               "fontSize": "12px", "color": col}),
+            ]))
+        acct_table = html.Div([
+            html.Div("Accounts — how each is categorised",
+                     style={"color": "#aaa", "fontSize": "12px",
+                            "marginBottom": "8px", "fontStyle": "italic"}),
+            html.Div(
+                "If a bucket shows ₹0, the account type / name didn't match. "
+                "Add 'mutual fund', 'epf', 'gold', etc. in the Type column of your Accounts sheet.",
+                style={"fontSize": "11px", "color": "#555", "marginBottom": "8px"},
+            ),
+            dbc.Table(
+                [html.Thead(html.Tr([
+                    html.Th("Account"), html.Th("Sheet Type"),
+                    html.Th("Detected As"), html.Th("Balance", style={"textAlign": "right"}),
+                ]))] + [html.Tbody(tbl_rows)],
+                bordered=False, size="sm", style={"color": "#e0e0e0"},
+            ),
+        ])
 
     # ── Corpus goals ──────────────────────────────────────────────────────────
     yrs_fire = _FIRE_YEAR - today.year
@@ -401,4 +501,4 @@ def refresh_portfolio(_n):
             sip_trend.update_layout(title="Detected Investment Outflows (6 months)", showlegend=False)
             _dark_fig(sip_trend)
 
-    return metrics, pie, alloc_bar, goals, proj_table, sip_metrics, sip_trend
+    return metrics, pie, alloc_bar, acct_table, goals, proj_table, sip_metrics, sip_trend
