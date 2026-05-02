@@ -3,8 +3,9 @@ Expenses page — monthly breakdown with category drill-down.
 Click any chart element to filter the transactions list at the bottom.
 """
 
+import re
 import dash
-from dash import html, dcc, callback, Input, Output, ctx, no_update
+from dash import html, dcc, callback, Input, Output, State, ctx, no_update
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
@@ -14,7 +15,7 @@ from datetime import date, timedelta
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data import load_transactions, fmt_inr
+from data import load_transactions, load_tags, batch_update_tags, save_rule, fmt_inr
 
 dash.register_page(__name__, path="/expenses", title="Expenses")
 
@@ -54,6 +55,9 @@ def layout():
         max_date = txn_df["date"].max().date()
 
     default_start = max(min_date, date.today() - timedelta(days=365))
+
+    tags     = load_tags()
+    tag_opts = [{"label": t["display"], "value": t["display"]} for t in tags]
 
     return html.Div([
         html.H3("💸 Expenses", style={"marginBottom": "16px"}),
@@ -122,11 +126,23 @@ def layout():
             id="exp-txn-grid",
             columnDefs=_TXN_COLS,
             rowData=[],
-            dashGridOptions={"domLayout": "autoHeight", "animateRows": True},
+            dashGridOptions={
+                "domLayout": "autoHeight",
+                "animateRows": True,
+                "rowSelection": "single",
+                "suppressRowClickSelection": False,
+            },
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
+            selectedRows=[],
         ),
         html.Small(id="exp-txn-caption", style={"color": "#666", "marginTop": "4px", "display": "block"}),
+
+        # ── Inline row detail / tag editor ────────────────────────────────────
+        html.Div(id="exp-row-detail", style={"marginTop": "6px"}),
+
+        # Hidden stores
+        dcc.Store(id="exp-row-tag-opts", data=tag_opts),
     ])
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -159,6 +175,12 @@ def _to_rows(df):
             "type":        str(r.get("type", "expense")),
         })
     return rows
+
+def _fmt_month(val):
+    try:
+        return pd.to_datetime(val + "-01").strftime("%b %Y")
+    except Exception:
+        return val
 
 # ── Charts callback ───────────────────────────────────────────────────────────
 
@@ -200,8 +222,10 @@ def update_expenses(start, end, group_by):
 
     if group_by == "month":
         agg = expenses.groupby("month")["amount"].sum().reset_index().sort_values("month")
+        agg["month_label"] = agg["month"].apply(_fmt_month)
         bar = go.Figure([go.Bar(x=agg["month"], y=agg["amount"], marker_color="#6c63ff",
-                                hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>")])
+                                text=agg["month_label"], textposition="none",
+                                hovertemplate="%{text}<br>₹%{y:,.0f}<extra></extra>")])
         bar.update_layout(title="Expenses by Month — click a bar to drill down")
     elif group_by == "category":
         agg = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False).reset_index()
@@ -242,6 +266,7 @@ def update_expenses(start, end, group_by):
     Output("exp-txn-grid",    "rowData"),
     Output("exp-txn-label",   "children"),
     Output("exp-txn-caption", "children"),
+    Output("exp-row-detail",  "children", allow_duplicate=True),
     Input("exp-bar",          "clickData"),
     Input("exp-pie",          "clickData"),
     Input("exp-treemap",      "clickData"),
@@ -249,6 +274,7 @@ def update_expenses(start, end, group_by):
     Input("exp-date",         "start_date"),
     Input("exp-date",         "end_date"),
     Input("exp-group",        "value"),
+    prevent_initial_call="initial_duplicate",
 )
 def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
                        start, end, group_by):
@@ -266,7 +292,7 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
         val = bar_click["points"][0]["x"]
         if group_by == "month":
             expenses = expenses[expenses["month"] == val]
-            label = f"Month: {val}"
+            label = f"Month: {_fmt_month(val)}"
         elif group_by == "category":
             expenses = expenses[expenses["primary_tag"] == val]
             label = f"Category: {val}"
@@ -280,17 +306,131 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
         label = f"Category: {val}"
 
     elif triggered == "exp-treemap" and treemap_click:
-        pt   = treemap_click["points"][0]
-        path = pt.get("id", "")
-        parts = [p for p in path.split("/") if p and p != "Expenses"]
-        if len(parts) == 2:
-            expenses = expenses[(expenses["primary_tag"] == parts[0]) &
-                                (expenses["month"] == parts[1])]
-            label = f"{parts[0]} · {parts[1]}"
-        elif len(parts) == 1:
-            expenses = expenses[expenses["primary_tag"] == parts[0]]
-            label = f"Category: {parts[0]}"
+        pt           = treemap_click["points"][0]
+        click_label  = pt.get("label", "")
+        click_parent = pt.get("parent", "")
+
+        if click_parent and click_parent not in ("", "Expenses"):
+            # Leaf level: parent = category, label = month
+            expenses = expenses[(expenses["primary_tag"] == click_parent) &
+                                (expenses["month"] == click_label)]
+            label = f"{click_parent} · {_fmt_month(click_label)}"
+        elif click_label and click_label != "Expenses":
+            # Category level: parent = Expenses, label = category
+            expenses = expenses[expenses["primary_tag"] == click_label]
+            label = f"Category: {click_label}"
 
     rows    = _to_rows(expenses)
-    caption = f"{len(rows):,} transactions"
-    return rows, label, caption
+    caption = f"{len(rows):,} transactions · click a row to view / edit tags"
+    return rows, label, caption, None
+
+# ── Row click → inline tag editor ────────────────────────────────────────────
+
+@callback(
+    Output("exp-row-detail",  "children"),
+    Input("exp-txn-grid",     "selectedRows"),
+    State("exp-row-tag-opts", "data"),
+    prevent_initial_call=True,
+)
+def exp_show_detail(selected_rows, tag_opts):
+    if not selected_rows:
+        return no_update
+    row = selected_rows[0]
+
+    current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
+                    if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
+    valid_defaults = [t for t in current_tags
+                      if any(o["value"] == t for o in (tag_opts or []))]
+
+    merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
+                      row.get("description", "")).split() if len(w) >= 3]
+    merchant_token = merchant_words[0] if merchant_words else ""
+
+    return html.Div([
+        dbc.Row([
+            dbc.Col([
+                html.Div(row["description"],
+                         style={"fontWeight": "600", "fontSize": "13px",
+                                "color": "#e0e0e0", "marginBottom": "2px"}),
+                html.Div(
+                    f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}",
+                    style={"fontSize": "11px", "color": "#888"},
+                ),
+            ]),
+            dbc.Col(
+                dbc.Button("✕", id="exp-row-close", size="sm", color="secondary",
+                           outline=True, style={"float": "right"}),
+                width="auto",
+            ),
+        ], className="mb-2 align-items-start"),
+
+        html.Hr(style={"borderColor": "#2a2a3e", "margin": "8px 0"}),
+
+        dbc.Row([
+            dbc.Col(
+                dcc.Dropdown(
+                    id="exp-row-tag-dropdown",
+                    options=tag_opts or [],
+                    value=valid_defaults,
+                    multi=True,
+                    placeholder="Search or pick a category…",
+                    style={"fontSize": "13px"},
+                ),
+                md=9,
+            ),
+            dbc.Col([
+                dbc.Button("✓ Save Tag", id="exp-row-save-btn", color="primary",
+                           size="sm", className="w-100"),
+            ], md=3),
+        ]),
+
+        html.Div(id="exp-row-save-feedback", className="mt-2"),
+
+        dcc.Store(id="exp-row-detail-id",       data=row.get("id")),
+        dcc.Store(id="exp-row-detail-merchant", data=merchant_token),
+
+    ], style={
+        "padding": "12px 18px",
+        "background": "#1a1a2e",
+        "borderLeft": "3px solid #6c63ff",
+        "borderRadius": "0 6px 6px 0",
+    })
+
+
+@callback(
+    Output("exp-row-save-feedback",  "children"),
+    Output("exp-txn-grid",           "rowData", allow_duplicate=True),
+    Input("exp-row-save-btn",        "n_clicks"),
+    State("exp-row-tag-dropdown",    "value"),
+    State("exp-row-detail-id",       "data"),
+    State("exp-row-detail-merchant", "data"),
+    State("exp-txn-grid",            "rowData"),
+    prevent_initial_call=True,
+)
+def exp_save_tag(n_clicks, chosen_tags, row_id, merchant, row_data):
+    if not n_clicks or not chosen_tags or not row_id:
+        return no_update, no_update
+
+    tags_str = ", ".join(chosen_tags)
+    saved, _ = batch_update_tags({row_id: tags_str})
+
+    if not saved:
+        return dbc.Alert("❌ Save failed.", color="danger", duration=4000), no_update
+
+    updated = []
+    for r in (row_data or []):
+        if r.get("id") == row_id:
+            r = {**r, "tags": tags_str}
+        updated.append(r)
+
+    return dbc.Alert(f"✅ Saved: {tags_str}", color="success", duration=3000), updated
+
+
+@callback(
+    Output("exp-row-detail",  "children", allow_duplicate=True),
+    Output("exp-txn-grid",    "selectedRows"),
+    Input("exp-row-close",    "n_clicks"),
+    prevent_initial_call=True,
+)
+def exp_close_detail(_):
+    return None, []

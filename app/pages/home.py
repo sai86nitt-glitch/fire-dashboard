@@ -2,8 +2,9 @@
 Home / Overview page — FIRE metrics, corpus projections, spend trend, accounts.
 """
 
+import re
 import dash
-from dash import html, dcc, callback, Input, Output, ctx
+from dash import html, dcc, callback, Input, Output, State, ctx, no_update
 import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
@@ -13,7 +14,8 @@ from datetime import date
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import (
-    load_transactions, load_accounts,
+    load_transactions, load_accounts, load_tags,
+    batch_update_tags, save_rule,
     fmt_inr, net_worth, monthly_expense_avg,
 )
 
@@ -53,6 +55,9 @@ _TXN_COLS = [
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 def layout():
+    tags     = load_tags()
+    tag_opts = [{"label": t["display"], "value": t["display"]} for t in tags]
+
     return html.Div([
         html.H3("🏠 FIRE Dashboard", style={"marginBottom": "16px"}),
 
@@ -98,13 +103,24 @@ def layout():
             id="home-txn-grid",
             columnDefs=_TXN_COLS,
             rowData=[],
-            dashGridOptions={"domLayout": "autoHeight", "animateRows": True},
+            dashGridOptions={
+                "domLayout": "autoHeight",
+                "animateRows": True,
+                "rowSelection": "single",
+                "suppressRowClickSelection": False,
+            },
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
+            selectedRows=[],
         ),
         html.Small(id="home-txn-caption",
                    style={"color": "#666", "marginTop": "4px", "display": "block"}),
 
+        # ── Inline row detail / tag editor ────────────────────────────────────
+        html.Div(id="home-row-detail", style={"marginTop": "6px"}),
+
+        # Hidden stores
+        dcc.Store(id="home-row-tag-opts", data=tag_opts),
         dcc.Interval(id="home-refresh", interval=5 * 60 * 1000, n_intervals=0),
     ])
 
@@ -240,10 +256,14 @@ def refresh(_n):
         cutoff   = pd.Timestamp.now() - pd.DateOffset(months=12)
         expenses = expenses[expenses["date"] >= cutoff]
         monthly  = expenses.groupby("month")["amount"].sum().reset_index().sort_values("month")
+        monthly["month_label"] = monthly["month"].apply(
+            lambda v: pd.to_datetime(v + "-01").strftime("%b %Y") if v else v
+        )
         trend_fig = go.Figure([
             go.Bar(x=monthly["month"], y=monthly["amount"],
                    marker_color="#6c63ff", name="Expenses",
-                   hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>")
+                   text=monthly["month_label"], textposition="none",
+                   hovertemplate="%{text}<br>₹%{y:,.0f}<extra></extra>")
         ])
         trend_fig.update_layout(title="Monthly Expenses (12m) — click a bar to filter",
                                 showlegend=False)
@@ -304,10 +324,12 @@ def refresh(_n):
     Output("home-txn-grid",    "rowData"),
     Output("home-txn-label",   "children"),
     Output("home-txn-caption", "children"),
+    Output("home-row-detail",  "children", allow_duplicate=True),
     Input("home-spend-trend",  "clickData"),
     Input("home-category-pie", "clickData"),
     Input("home-txn-clear",    "n_clicks"),
     Input("home-refresh",      "n_intervals"),
+    prevent_initial_call="initial_duplicate",
 )
 def drill_transactions(trend_click, pie_click, _clear, _refresh):
     df    = load_transactions()
@@ -318,7 +340,11 @@ def drill_transactions(trend_click, pie_click, _clear, _refresh):
     if triggered == "home-spend-trend" and trend_click:
         month = trend_click["points"][0]["x"]
         txns  = txns[txns["month"] == month]
-        label = f"Expenses in {month}"
+        try:
+            month_label = pd.to_datetime(month + "-01").strftime("%b %Y")
+        except Exception:
+            month_label = month
+        label = f"Expenses in {month_label}"
 
     elif triggered == "home-category-pie" and pie_click:
         cat   = pie_click["points"][0]["label"]
@@ -327,10 +353,120 @@ def drill_transactions(trend_click, pie_click, _clear, _refresh):
         label = f"Category: {cat} (last 3 months)"
 
     else:
-        # Default: last 3 months
         cut3 = pd.Timestamp.now() - pd.DateOffset(months=3)
         txns = txns[txns["date"] >= cut3]
 
     rows    = _to_rows(txns)
-    caption = f"{len(rows):,} transactions"
-    return rows, label, caption
+    caption = f"{len(rows):,} transactions · click a row to view / edit tags"
+    return rows, label, caption, None
+
+# ── Row click → inline tag editor ────────────────────────────────────────────
+
+@callback(
+    Output("home-row-detail",  "children"),
+    Input("home-txn-grid",     "selectedRows"),
+    State("home-row-tag-opts", "data"),
+    prevent_initial_call=True,
+)
+def home_show_detail(selected_rows, tag_opts):
+    if not selected_rows:
+        return no_update
+    row = selected_rows[0]
+
+    current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
+                    if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
+    valid_defaults = [t for t in current_tags
+                      if any(o["value"] == t for o in (tag_opts or []))]
+
+    merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
+                      row.get("description", "")).split() if len(w) >= 3]
+    merchant_token = merchant_words[0] if merchant_words else ""
+
+    return html.Div([
+        dbc.Row([
+            dbc.Col([
+                html.Div(row["description"],
+                         style={"fontWeight": "600", "fontSize": "13px",
+                                "color": "#e0e0e0", "marginBottom": "2px"}),
+                html.Div(
+                    f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}",
+                    style={"fontSize": "11px", "color": "#888"},
+                ),
+            ]),
+            dbc.Col(
+                dbc.Button("✕", id="home-row-close", size="sm", color="secondary",
+                           outline=True, style={"float": "right"}),
+                width="auto",
+            ),
+        ], className="mb-2 align-items-start"),
+
+        html.Hr(style={"borderColor": "#2a2a3e", "margin": "8px 0"}),
+
+        dbc.Row([
+            dbc.Col(
+                dcc.Dropdown(
+                    id="home-row-tag-dropdown",
+                    options=tag_opts or [],
+                    value=valid_defaults,
+                    multi=True,
+                    placeholder="Search or pick a category…",
+                    style={"fontSize": "13px"},
+                ),
+                md=9,
+            ),
+            dbc.Col([
+                dbc.Button("✓ Save Tag", id="home-row-save-btn", color="primary",
+                           size="sm", className="w-100"),
+            ], md=3),
+        ]),
+
+        html.Div(id="home-row-save-feedback", className="mt-2"),
+
+        dcc.Store(id="home-row-detail-id",       data=row.get("id")),
+        dcc.Store(id="home-row-detail-merchant", data=merchant_token),
+
+    ], style={
+        "padding": "12px 18px",
+        "background": "#1a1a2e",
+        "borderLeft": "3px solid #6c63ff",
+        "borderRadius": "0 6px 6px 0",
+    })
+
+
+@callback(
+    Output("home-row-save-feedback",  "children"),
+    Output("home-txn-grid",           "rowData", allow_duplicate=True),
+    Input("home-row-save-btn",        "n_clicks"),
+    State("home-row-tag-dropdown",    "value"),
+    State("home-row-detail-id",       "data"),
+    State("home-row-detail-merchant", "data"),
+    State("home-txn-grid",            "rowData"),
+    prevent_initial_call=True,
+)
+def home_save_tag(n_clicks, chosen_tags, row_id, merchant, row_data):
+    if not n_clicks or not chosen_tags or not row_id:
+        return no_update, no_update
+
+    tags_str = ", ".join(chosen_tags)
+    saved, _ = batch_update_tags({row_id: tags_str})
+
+    if not saved:
+        return dbc.Alert("❌ Save failed.", color="danger", duration=4000), no_update
+
+    updated = []
+    for r in (row_data or []):
+        if r.get("id") == row_id:
+            r = {**r, "tags": tags_str}
+        updated.append(r)
+
+    return dbc.Alert(f"✅ Saved: {tags_str}", color="success", duration=3000), updated
+
+
+@callback(
+    Output("home-row-detail",  "children", allow_duplicate=True),
+    Output("home-txn-grid",    "selectedRows"),
+    Input("home-row-close",    "n_clicks"),
+    prevent_initial_call=True,
+)
+def home_close_detail(_):
+    return None, []
