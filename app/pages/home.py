@@ -1,12 +1,14 @@
 """
-Home / Overview page — FIRE metrics, account balances, spending trend.
+Home / Overview page — FIRE metrics, corpus projections, spend trend, accounts.
 """
 
 import dash
-from dash import html, dcc, callback, Input, Output
+from dash import html, dcc, callback, Input, Output, ctx
+import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+from datetime import date
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,26 +17,85 @@ from data import (
     fmt_inr, net_worth, monthly_expense_avg,
 )
 
-dash.register_page(__name__, path="/", title="Overview")
+dash.register_page(__name__, path="/", title="Dashboard")
 
-_FIRE_TARGET   = 5_00_00_000   # ₹5 Cr
-_ANNUAL_SPEND  = None          # computed dynamically
-_SAFE_WR       = 0.04
+_SAFE_WR   = 0.04   # 4% SWR → 25× annual spend = FIRE target
+_FIRE_MULT = 25
+
+# ── Shared transaction column defs ────────────────────────────────────────────
+
+_TXN_COLS = [
+    {"field": "id",          "hide": True},
+    {"field": "date_str",    "headerName": "Date",        "width": 105},
+    {"field": "amount_str",  "headerName": "Amount",      "width": 130,
+     "cellStyle": {"fontFamily": "monospace"},
+     "cellClassRules": {
+         "amt-expense":  "params.data.type === 'expense'",
+         "amt-income":   "params.data.type === 'income'",
+         "amt-transfer": "params.data.type === 'transfer'",
+     }},
+    {"field": "description", "headerName": "Description", "flex": 3, "minWidth": 160},
+    {"field": "tags",        "headerName": "Tags",        "flex": 1, "minWidth": 90,
+     "cellStyle": {"color": "#888", "fontSize": "11px"}},
+    {"field": "account_name","headerName": "Account",     "width": 110,
+     "cellStyle": {"color": "#888", "fontSize": "11px"}},
+]
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 def layout():
     return html.Div([
-        html.H3("🏠 FIRE Overview", style={"marginBottom": "16px"}),
+        html.H3("🏠 FIRE Dashboard", style={"marginBottom": "16px"}),
+
+        # Metric cards
         dbc.Row(id="home-metrics", className="mb-3 g-2"),
         html.Hr(style={"borderColor": "#2a2a3e"}),
+
+        # FIRE progress + projections
         dbc.Row([
-            dbc.Col(dcc.Graph(id="home-spend-trend", config={"displayModeBar": False}), md=8),
-            dbc.Col(dcc.Graph(id="home-category-pie", config={"displayModeBar": False}), md=4),
+            dbc.Col(dcc.Graph(id="home-fire-gauge", config={"displayModeBar": False}), md=5),
+            dbc.Col(html.Div(id="home-projections"), md=7),
         ], className="mb-3 g-2"),
+
+        html.Hr(style={"borderColor": "#2a2a3e"}),
+
+        # Spend trend + category pie
+        dbc.Row([
+            dbc.Col(dcc.Graph(id="home-spend-trend",   config={"displayModeBar": False}), md=8),
+            dbc.Col(dcc.Graph(id="home-category-pie",  config={"displayModeBar": False}), md=4),
+        ], className="mb-3 g-2"),
+
+        # Accounts table
         dbc.Row([
             dbc.Col(html.Div(id="home-accounts-table"), md=12),
-        ]),
+        ], className="mb-3"),
+
+        html.Hr(style={"borderColor": "#2a2a3e"}),
+
+        # Transactions at bottom
+        dbc.Row([
+            dbc.Col(
+                html.Div(id="home-txn-label",
+                         style={"color": "#aaa", "fontSize": "12px", "fontStyle": "italic"}),
+                width="auto",
+            ),
+            dbc.Col(
+                dbc.Button("✕ Clear filter", id="home-txn-clear", size="sm",
+                           color="secondary", outline=True, style={"fontSize": "11px"}),
+                width="auto", className="ms-auto",
+            ),
+        ], className="mb-2 align-items-center"),
+        dag.AgGrid(
+            id="home-txn-grid",
+            columnDefs=_TXN_COLS,
+            rowData=[],
+            dashGridOptions={"domLayout": "autoHeight", "animateRows": True},
+            defaultColDef={"resizable": True, "sortable": True},
+            className="ag-theme-alpine-dark",
+        ),
+        html.Small(id="home-txn-caption",
+                   style={"color": "#666", "marginTop": "4px", "display": "block"}),
+
         dcc.Interval(id="home-refresh", interval=5 * 60 * 1000, n_intervals=0),
     ])
 
@@ -57,10 +118,27 @@ def _dark_fig(fig):
     )
     return fig
 
-# ── Callback ─────────────────────────────────────────────────────────────────
+def _to_rows(df):
+    icon = {"expense": "←", "income": "+", "transfer": "⇌"}
+    rows = []
+    for _, r in df.sort_values("date", ascending=False).iterrows():
+        rows.append({
+            "id":          str(r.get("id", "")),
+            "date_str":    r["date"].strftime("%d %b %Y") if pd.notna(r["date"]) else "",
+            "amount_str":  f"{icon.get(r['type'], '←')} {fmt_inr(abs(r['amount']))}",
+            "description": str(r.get("description", "")),
+            "tags":        str(r.get("tags", "")),
+            "account_name":str(r.get("account_name", "")),
+            "type":        str(r.get("type", "expense")),
+        })
+    return rows
+
+# ── Main refresh callback ─────────────────────────────────────────────────────
 
 @callback(
     Output("home-metrics",       "children"),
+    Output("home-fire-gauge",    "figure"),
+    Output("home-projections",   "children"),
     Output("home-spend-trend",   "figure"),
     Output("home-category-pie",  "figure"),
     Output("home-accounts-table","children"),
@@ -73,41 +151,96 @@ def refresh(_n):
     nw      = net_worth(acc_df)
     avg_exp = monthly_expense_avg(txn_df, months=12)
     annual  = avg_exp * 12
-    target  = _FIRE_TARGET
+    target  = _FIRE_MULT * annual   # dynamic: 25× annual spend
     pct     = min(nw / target * 100, 100) if target else 0
     fire_nr = nw / annual if annual else 0
     yrs_to  = (target - nw) / (annual * (1 - _SAFE_WR)) if annual and nw < target else 0
 
     metrics = [
-        _metric_card("Net Worth",           fmt_inr(nw),    "#00c49f"),
-        _metric_card("Monthly Avg Spend",   fmt_inr(avg_exp), "#ff6b6b",
-                     sub=f"₹{annual/1e5:.1f}L / yr"),
-        _metric_card("FIRE Progress",       f"{pct:.1f}%",  "#6c63ff",
+        _metric_card("Net Worth",         fmt_inr(nw),       "#00c49f"),
+        _metric_card("Monthly Avg Spend", fmt_inr(avg_exp),  "#ff6b6b",
+                     sub=f"{fmt_inr(annual)} / yr"),
+        _metric_card("FIRE Progress",     f"{pct:.1f}%",     "#6c63ff",
                      sub=f"Target {fmt_inr(target)}"),
-        _metric_card("FIRE Number",         f"{fire_nr:.1f}×", "#ffc107",
+        _metric_card("FIRE Number",       f"{fire_nr:.1f}×", "#ffc107",
                      sub=f"~{max(0, yrs_to):.0f} yrs at 4% SWR"),
     ]
+
+    # ── FIRE gauge ────────────────────────────────────────────────────────────
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=pct,
+        number={"suffix": "%", "font": {"size": 36, "color": "#e0e0e0"}},
+        delta={"reference": 100, "valueformat": ".1f", "suffix": "%",
+               "increasing": {"color": "#00c49f"}, "decreasing": {"color": "#ff6b6b"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#555"},
+            "bar":  {"color": "#6c63ff"},
+            "bgcolor": "#13131f",
+            "steps": [
+                {"range": [0,  25], "color": "#1a1a2e"},
+                {"range": [25, 50], "color": "#1e1e30"},
+                {"range": [50, 75], "color": "#222238"},
+                {"range": [75,100], "color": "#262640"},
+            ],
+            "threshold": {"line": {"color": "#00c49f", "width": 3}, "value": 100},
+        },
+        title={"text": f"FIRE Progress<br><span style='font-size:12px;color:#888'>"
+                       f"₹{nw/1e7:.2f} Cr / {fmt_inr(target)}</span>",
+               "font": {"color": "#e0e0e0"}},
+    ))
+    gauge.update_layout(paper_bgcolor="#1e1e2e", font={"color": "#e0e0e0"},
+                        margin={"t": 60, "b": 20, "l": 20, "r": 20}, height=280)
+
+    # ── Corpus projections table ───────────────────────────────────────────────
+    this_year = date.today().year
+    proj_rows = []
+    for yrs in [10, 12, 15]:
+        yr = this_year + yrs
+        proj_rows.append(html.Tr([
+            html.Td(str(yr),                  style={"color": "#888",    "fontSize": "12px"}),
+            html.Td(f"{yrs} yrs",             style={"color": "#888",    "fontSize": "11px"}),
+            html.Td(fmt_inr(nw * 1.12 ** yrs),style={"color": "#6c63ff","fontSize": "12px",
+                                                      "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(fmt_inr(nw * 1.15 ** yrs),style={"color": "#00c49f","fontSize": "12px",
+                                                      "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(fmt_inr(nw * 1.18 ** yrs),style={"color": "#ffc107","fontSize": "12px",
+                                                      "fontFamily": "monospace", "textAlign": "right"}),
+        ]))
+    projections = html.Div([
+        html.Div("Corpus projections",
+                 style={"color": "#aaa", "fontSize": "12px", "marginBottom": "8px",
+                        "fontStyle": "italic"}),
+        dbc.Table(
+            [html.Thead(html.Tr([
+                html.Th("Year"), html.Th(""), html.Th("12% CAGR"), html.Th("15% CAGR"), html.Th("18% CAGR"),
+            ]))] + [html.Tbody(proj_rows)],
+            bordered=False, size="sm", style={"color": "#e0e0e0"},
+        ),
+        html.Div(
+            f"🎯 Target corpus: {fmt_inr(target)} ({_FIRE_MULT}× annual spend of {fmt_inr(annual)})",
+            style={"fontSize": "11px", "color": "#888", "marginTop": "8px"},
+        ),
+    ])
 
     # ── Spend trend (last 12 months) ─────────────────────────────────────────
     if txn_df.empty:
         trend_fig = go.Figure()
     else:
-        expenses  = txn_df[txn_df["type"] == "expense"].copy()
-        cutoff    = pd.Timestamp.now() - pd.DateOffset(months=12)
-        expenses  = expenses[expenses["date"] >= cutoff]
-        monthly   = expenses.groupby("month")["amount"].sum().reset_index()
-        monthly   = monthly.sort_values("month")
+        expenses = txn_df[txn_df["type"] == "expense"].copy()
+        cutoff   = pd.Timestamp.now() - pd.DateOffset(months=12)
+        expenses = expenses[expenses["date"] >= cutoff]
+        monthly  = expenses.groupby("month")["amount"].sum().reset_index().sort_values("month")
         trend_fig = go.Figure([
-            go.Bar(
-                x=monthly["month"], y=monthly["amount"],
-                marker_color="#6c63ff", name="Expenses",
-                hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>",
-            )
+            go.Bar(x=monthly["month"], y=monthly["amount"],
+                   marker_color="#6c63ff", name="Expenses",
+                   hovertemplate="%{x}<br>₹%{y:,.0f}<extra></extra>")
         ])
-        trend_fig.update_layout(title="Monthly Expenses (12m)", showlegend=False)
-        avg_line = avg_exp
-        trend_fig.add_hline(y=avg_line, line_dash="dash", line_color="#ff6b6b",
-                            annotation_text=f"Avg {fmt_inr(avg_line)}", annotation_position="top right")
+        trend_fig.update_layout(title="Monthly Expenses (12m) — click a bar to filter",
+                                showlegend=False)
+        trend_fig.add_hline(y=avg_exp, line_dash="dash", line_color="#ff6b6b",
+                            annotation_text=f"Avg {fmt_inr(avg_exp)}",
+                            annotation_position="top right")
     _dark_fig(trend_fig)
 
     # ── Category pie (last 3 months) ─────────────────────────────────────────
@@ -123,7 +256,7 @@ def refresh(_n):
             hole=0.4, textinfo="percent",
             hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>",
         )])
-        pie_fig.update_layout(title="Spend by Category (3m)")
+        pie_fig.update_layout(title="Spend by Category (3m) — click to filter")
     _dark_fig(pie_fig)
 
     # ── Accounts table ────────────────────────────────────────────────────────
@@ -132,28 +265,63 @@ def refresh(_n):
     else:
         rows = []
         for _, r in acc_df.iterrows():
-            bal      = r.get("computed_balance", 0)
-            stale    = r.get("days_stale", None)
+            bal       = r.get("computed_balance", 0)
+            stale     = r.get("days_stale", None)
             stale_str = f"{int(stale)}d ago" if pd.notna(stale) and stale else "—"
-            colour   = "#00c49f" if bal >= 0 else "#ff6b6b"
+            colour    = "#00c49f" if bal >= 0 else "#ff6b6b"
             rows.append(html.Tr([
-                html.Td(str(r.get("name", "")),         style={"color": "#e0e0e0", "fontSize": "12px"}),
-                html.Td(str(r.get("type", "")),         style={"color": "#888",    "fontSize": "11px"}),
-                html.Td(fmt_inr(bal),                   style={"color": colour,    "fontSize": "12px",
-                                                                "fontFamily": "monospace", "textAlign": "right"}),
-                html.Td(stale_str,                      style={"color": "#666",    "fontSize": "11px",
-                                                                "textAlign": "right"}),
+                html.Td(str(r.get("name", "")),  style={"color": "#e0e0e0", "fontSize": "12px"}),
+                html.Td(str(r.get("type", "")),  style={"color": "#888",    "fontSize": "11px"}),
+                html.Td(fmt_inr(bal),            style={"color": colour,    "fontSize": "12px",
+                                                        "fontFamily": "monospace", "textAlign": "right"}),
+                html.Td(stale_str,               style={"color": "#666",    "fontSize": "11px",
+                                                        "textAlign": "right"}),
             ]))
         tbl = dbc.Table(
             [html.Thead(html.Tr([
-                html.Th("Account"),
-                html.Th("Type"),
+                html.Th("Account"), html.Th("Type"),
                 html.Th("Balance", style={"textAlign": "right"}),
                 html.Th("Updated",  style={"textAlign": "right"}),
             ]))] + [html.Tbody(rows)],
             bordered=False, hover=True, responsive=True, size="sm",
-            style={"color": "#e0e0e0"},
-            className="mb-0",
+            style={"color": "#e0e0e0"}, className="mb-0",
         )
 
-    return metrics, trend_fig, pie_fig, tbl
+    return metrics, gauge, projections, trend_fig, pie_fig, tbl
+
+# ── Transactions drill-down callback ──────────────────────────────────────────
+
+@callback(
+    Output("home-txn-grid",    "rowData"),
+    Output("home-txn-label",   "children"),
+    Output("home-txn-caption", "children"),
+    Input("home-spend-trend",  "clickData"),
+    Input("home-category-pie", "clickData"),
+    Input("home-txn-clear",    "n_clicks"),
+    Input("home-refresh",      "n_intervals"),
+)
+def drill_transactions(trend_click, pie_click, _clear, _refresh):
+    df    = load_transactions()
+    txns  = df.copy() if not df.empty else df
+    label = "Recent transactions — click a chart bar or slice to filter"
+    triggered = ctx.triggered_id
+
+    if triggered == "home-spend-trend" and trend_click:
+        month = trend_click["points"][0]["x"]
+        txns  = txns[txns["month"] == month]
+        label = f"Expenses in {month}"
+
+    elif triggered == "home-category-pie" and pie_click:
+        cat   = pie_click["points"][0]["label"]
+        cut3  = pd.Timestamp.now() - pd.DateOffset(months=3)
+        txns  = txns[(txns["primary_tag"] == cat) & (txns["date"] >= cut3)]
+        label = f"Category: {cat} (last 3 months)"
+
+    else:
+        # Default: last 3 months
+        cut3 = pd.Timestamp.now() - pd.DateOffset(months=3)
+        txns = txns[txns["date"] >= cut3]
+
+    rows    = _to_rows(txns)
+    caption = f"{len(rows):,} transactions"
+    return rows, label, caption

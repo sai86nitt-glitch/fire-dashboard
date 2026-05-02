@@ -83,9 +83,10 @@ def layout():
                 dcc.Dropdown(
                     id="txn-type",
                     options=["expense", "income", "transfer"],
-                    value=["expense", "income", "transfer"],
-                    multi=True, clearable=False,
-                    style={"minWidth": "200px"},
+                    value=None,
+                    multi=True, clearable=True,
+                    placeholder="All types",
+                    style={"minWidth": "180px"},
                 ),
             ], width="auto"),
 
@@ -94,8 +95,9 @@ def layout():
                 dcc.Dropdown(
                     id="txn-account",
                     options=all_accounts,
-                    value=all_accounts,
-                    multi=True, clearable=False,
+                    value=None,
+                    multi=True, clearable=True,
+                    placeholder="All accounts",
                     style={"minWidth": "220px"},
                 ),
             ], width="auto"),
@@ -129,11 +131,10 @@ def layout():
                 "rowSelection": "single",
                 "suppressRowClickSelection": False,
                 "animateRows": True,
-                "domLayout": "normal",
+                "domLayout": "autoHeight",
             },
             defaultColDef={"resizable": True, "sortable": True, "filter": False},
             className="ag-theme-alpine-dark",
-            style={"height": "520px"},
             selectedRows=[],
         ),
 

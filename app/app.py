@@ -9,32 +9,32 @@ app = dash.Dash(
     suppress_callback_exceptions=True,
     title="FIRE Dashboard",
 )
-server = app.server  # exposed for gunicorn
+server = app.server
 
-sidebar = html.Div([
-    html.Div("🔥 FIRE", style={
-        "fontSize": "18px", "fontWeight": "700",
-        "padding": "20px 16px 12px", "color": "#e0e0e0",
-        "borderBottom": "1px solid #2a2a3e",
-    }),
-    dbc.Nav([
-        dbc.NavLink("🏠 Overview",     href="/",             active="exact"),
-        dbc.NavLink("💸 Expenses",     href="/expenses",     active="exact"),
-        dbc.NavLink("🔍 Transactions", href="/transactions", active="exact"),
-    ], vertical=True, pills=True, className="p-2"),
-], id="sidebar")
+navbar = dbc.Navbar(
+    dbc.Container([
+        dbc.NavbarBrand("🔥 FIRE", href="/",
+                        style={"fontWeight": "700", "fontSize": "18px",
+                               "color": "#e0e0e0", "letterSpacing": "0.05em"}),
+        dbc.Nav([
+            dbc.NavLink("🏠 Dashboard", href="/",        active="exact"),
+            dbc.NavLink("💸 Expenses",  href="/expenses", active="exact"),
+        ], navbar=True, pills=True),
+    ], fluid=True),
+    color="#1e1e2e",
+    dark=True,
+    fixed="top",
+    style={"borderBottom": "1px solid #2a2a3e", "zIndex": 1050},
+)
 
 app.layout = html.Div([
     dcc.Location(id="url"),
-    dbc.Row([
-        dbc.Col(sidebar, width=2, style={"padding": 0}),
-        dbc.Col(
-            dash.page_container,
-            width=10,
-            style={"padding": "24px 28px", "overflowY": "auto", "maxHeight": "100vh"},
-        ),
-    ], className="g-0", style={"minHeight": "100vh"}),
-])
+    navbar,
+    html.Div(
+        dash.page_container,
+        style={"padding": "72px 20px 40px"},
+    ),
+], style={"background": "#0e0e1a", "minHeight": "100vh"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=8502)

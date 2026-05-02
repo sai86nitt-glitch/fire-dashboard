@@ -115,10 +115,9 @@ def layout():
             id="exp-txn-grid",
             columnDefs=_TXN_COLS,
             rowData=[],
-            dashGridOptions={"domLayout": "normal", "animateRows": True},
+            dashGridOptions={"domLayout": "autoHeight", "animateRows": True},
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
-            style={"height": "420px"},
         ),
         html.Small(id="exp-txn-caption", style={"color": "#666", "marginTop": "4px", "display": "block"}),
     ])
