@@ -19,8 +19,17 @@ from data import (
 
 dash.register_page(__name__, path="/", title="Dashboard")
 
-_SAFE_WR   = 0.04   # 4% SWR → 25× annual spend = FIRE target
+_SAFE_WR   = 0.04
 _FIRE_MULT = 25
+
+def _blank():
+    """Dark empty placeholder figure shown before data loads."""
+    import plotly.graph_objects as _go
+    f = _go.Figure()
+    f.update_layout(paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
+                    xaxis={"visible": False}, yaxis={"visible": False},
+                    margin={"t": 10, "b": 10, "l": 10, "r": 10})
+    return f
 
 # ── Shared transaction column defs ────────────────────────────────────────────
 
@@ -53,7 +62,7 @@ def layout():
 
         # FIRE progress + projections
         dbc.Row([
-            dbc.Col(dcc.Graph(id="home-fire-gauge", config={"displayModeBar": False}), md=5),
+            dbc.Col(dcc.Graph(id="home-fire-gauge",  figure=_blank(), config={"displayModeBar": False}), md=5),
             dbc.Col(html.Div(id="home-projections"), md=7),
         ], className="mb-3 g-2"),
 
@@ -61,8 +70,8 @@ def layout():
 
         # Spend trend + category pie
         dbc.Row([
-            dbc.Col(dcc.Graph(id="home-spend-trend",   config={"displayModeBar": False}), md=8),
-            dbc.Col(dcc.Graph(id="home-category-pie",  config={"displayModeBar": False}), md=4),
+            dbc.Col(dcc.Graph(id="home-spend-trend",  figure=_blank(), config={"displayModeBar": False}), md=8),
+            dbc.Col(dcc.Graph(id="home-category-pie", figure=_blank(), config={"displayModeBar": False}), md=4),
         ], className="mb-3 g-2"),
 
         # Accounts table

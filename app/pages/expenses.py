@@ -18,6 +18,13 @@ from data import load_transactions, fmt_inr
 
 dash.register_page(__name__, path="/expenses", title="Expenses")
 
+def _blank():
+    f = go.Figure()
+    f.update_layout(paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
+                    xaxis={"visible": False}, yaxis={"visible": False},
+                    margin={"t": 10, "b": 10, "l": 10, "r": 10})
+    return f
+
 # ── Shared column defs for drill-down grid ────────────────────────────────────
 
 _TXN_COLS = [
@@ -88,12 +95,12 @@ def layout():
 
         # Charts
         dbc.Row([
-            dbc.Col(dcc.Graph(id="exp-bar",   config={"displayModeBar": False}), md=8),
-            dbc.Col(dcc.Graph(id="exp-pie",   config={"displayModeBar": False}), md=4),
+            dbc.Col(dcc.Graph(id="exp-bar",  figure=_blank(), config={"displayModeBar": False}), md=8),
+            dbc.Col(dcc.Graph(id="exp-pie",  figure=_blank(), config={"displayModeBar": False}), md=4),
         ], className="mb-3 g-2"),
 
         dbc.Row([
-            dbc.Col(dcc.Graph(id="exp-treemap", config={"displayModeBar": False}), md=12),
+            dbc.Col(dcc.Graph(id="exp-treemap", figure=_blank(), config={"displayModeBar": False}), md=12),
         ], className="mb-3 g-2"),
 
         # ── Transactions drill-down ───────────────────────────────────────────
