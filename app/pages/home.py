@@ -566,14 +566,18 @@ def refresh(_n):
         curr_fy_s = _cat_total(expenses, curr_fy)
         prev_fy_s = _cat_total(expenses, prev_fy, prev_fy_end)
 
-        all_cats = sorted(
+        all_cats_sorted = sorted(
             set(last_mo.index) | set(three_mo.index) |
             set(curr_fy_s.index) | set(prev_fy_s.index),
-            key=lambda c: last_mo.get(c, 0), reverse=True,
+            key=lambda c: (last_mo.get(c, 0) + three_mo.get(c, 0) +
+                           curr_fy_s.get(c, 0) + prev_fy_s.get(c, 0)),
+            reverse=True,
         )
+        top_cats  = all_cats_sorted[:15]
+        rest_cats = all_cats_sorted[15:]
 
         tbl_rows = []
-        for cat in all_cats:
+        for cat in top_cats:
             lm  = last_mo.get(cat, 0)
             t3  = three_mo.get(cat, 0) / 3
             cfy = curr_fy_s.get(cat, 0) / curr_fy_months
@@ -596,6 +600,19 @@ def refresh(_n):
                 _cell(cfy, pfy),
                 _cell(pfy),
             ]))
+
+        # "Others" row aggregating categories outside the top 15
+        if rest_cats:
+            o_lm  = sum(last_mo.get(c, 0)    for c in rest_cats)
+            o_t3  = sum(three_mo.get(c, 0)   for c in rest_cats) / 3
+            o_cfy = sum(curr_fy_s.get(c, 0)  for c in rest_cats) / curr_fy_months
+            o_pfy = sum(prev_fy_s.get(c, 0)  for c in rest_cats) / prev_fy_months
+            if o_lm or o_t3 or o_cfy or o_pfy:
+                tbl_rows.append(html.Tr([
+                    html.Td(f"Others ({len(rest_cats)})",
+                            style={"fontSize": "12px", "color": "#666", "fontStyle": "italic"}),
+                    _cell(o_lm), _cell(o_t3), _cell(o_cfy), _cell(o_pfy),
+                ]))
 
         def _tot(s, divisor=1):
             return s.sum() / divisor if len(s) else 0
