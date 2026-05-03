@@ -100,48 +100,56 @@ input.dash-input::placeholder { color: #666 !important; }
 ::-webkit-scrollbar-track { background: #1e1e2e; }
 ::-webkit-scrollbar-thumb { background: #3a3a5e; border-radius: 3px; }
 
-/* ── Bottom tab bar (mobile) ─────────────────────────────────────────────── */
-#bottom-tab-bar {
+/* ── Browser-style top tab strip ─────────────────────────────────────────── */
+#top-tab-strip {
   position: fixed;
-  bottom: 0;
+  top: 56px;               /* sits flush below the navbar */
   left: 0;
   right: 0;
-  height: 60px;
-  background: #1e1e2e;
-  border-top: 1px solid #2a2a3e;
-  z-index: 1050;
-  justify-content: space-around;
-  align-items: stretch;
+  display: flex;
+  align-items: flex-end;
+  background: #13131f;     /* slightly darker "shelf" behind the tabs */
+  border-bottom: 1px solid #2a2a3e;
+  z-index: 1049;
+  padding: 6px 12px 0;
+  gap: 4px;
 }
 
-.bottom-tab {
-  flex: 1;
+.top-tab {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  padding: 7px 16px 8px;
+  font-size: 13px;
   color: #888 !important;
   text-decoration: none !important;
-  font-size: 11px;
-  gap: 3px;
-  border-top: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  background: #1e1e2e;
+  border: 1px solid #2a2a3e;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
 }
 
-.bottom-tab:hover {
+.top-tab:hover {
   color: #ccc !important;
+  background: #252535;
 }
 
-.bottom-tab.active,
-.bottom-tab[aria-current="page"] {
-  color: #a78bfa !important;
-  border-top-color: #a78bfa;
+/* Active tab merges into the page — same background, hides the bottom border */
+.top-tab.active {
+  color: #e0e0e0 !important;
+  background: #0e0e1a;
+  border-color: #3a3a5e;
+  /* cover the strip's border-bottom so tab appears connected to page */
+  margin-bottom: -1px;
+  padding-bottom: 9px;
 }
 
-.tab-icon  { font-size: 20px; line-height: 1; }
-.tab-label { font-size: 10px; letter-spacing: 0.03em; }
+.tab-icon  { font-size: 16px; line-height: 1; }
+.tab-label { font-size: 12px; letter-spacing: 0.02em; }
 
-/* Extra bottom padding on mobile so content isn't hidden behind tab bar */
-@media (max-width: 767px) {
-  .page-content { padding-bottom: 72px !important; }
+/* Page content: offset below navbar + tab strip */
+.page-content {
+  padding: 110px 20px 40px;
 }

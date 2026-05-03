@@ -506,40 +506,18 @@ def exp_apply_filter(all_rows, search, field):
     Output("exp-row-detail-merchant", "data"),
     Output("exp-modal-mode",          "data"),
     Output("exp-edit-ids",            "data"),
-    Input("exp-txn-grid",             "selectedRows"),
+    Input("exp-txn-grid",             "cellClicked"),
+    State("exp-txn-grid",             "selectedRows"),
     State("exp-row-tag-opts",         "data"),
     prevent_initial_call=True,
 )
-def exp_show_detail(selected_rows, tag_opts):
+def exp_show_detail(cell_clicked, selected_rows, tag_opts):
     _nu = no_update
-    if not selected_rows:
+    if not cell_clicked:
         return (_nu,) * 16
 
-    if len(selected_rows) == 1:
-        row = selected_rows[0]
-        current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
-                        if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
-        valid_defaults = [t for t in current_tags
-                          if any(o["value"] == t for o in (tag_opts or []))]
-        merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
-                          row.get("description", "")).split() if len(w) >= 3]
-        merchant_token = merchant_words[0] if merchant_words else ""
-
-        meta      = f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}"
-        date_val  = row.get("date_raw", "")
-        amount_val = abs(float(row.get("amount_raw", 0))) or None
-
-        return (True,
-                row["description"], meta,
-                row["description"], False,
-                date_val, False,
-                amount_val, False,
-                row.get("type", "expense"),
-                tag_opts or [], valid_defaults,
-                row.get("id"), merchant_token,
-                "single", [row.get("id")])
-
-    else:
+    # Bulk mode: multiple rows selected
+    if selected_rows and len(selected_rows) > 1:
         count = len(selected_rows)
         ids   = [r.get("id") for r in selected_rows]
         return (True,
@@ -552,6 +530,33 @@ def exp_show_detail(selected_rows, tag_opts):
                 tag_opts or [], [],
                 None, None,
                 "bulk", ids)
+
+    # Single row: use tapped cell's row data
+    row = cell_clicked.get("data", {})
+    if not row:
+        return (_nu,) * 16
+
+    current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
+                    if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
+    valid_defaults = [t for t in current_tags
+                      if any(o["value"] == t for o in (tag_opts or []))]
+    merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
+                      row.get("description", "")).split() if len(w) >= 3]
+    merchant_token = merchant_words[0] if merchant_words else ""
+
+    meta       = f"{row.get('account_name', '')}  ·  {row.get('date_str', '')}  ·  {row.get('amount_str', '')}"
+    date_val   = row.get("date_raw", "")
+    amount_val = abs(float(row.get("amount_raw", 0))) or None
+
+    return (True,
+            row.get("description", ""), meta,
+            row.get("description", ""), False,
+            date_val, False,
+            amount_val, False,
+            row.get("type", "expense"),
+            tag_opts or [], valid_defaults,
+            row.get("id"), merchant_token,
+            "single", [row.get("id")])
 
 
 @callback(

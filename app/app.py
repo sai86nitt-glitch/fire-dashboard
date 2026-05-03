@@ -45,12 +45,6 @@ navbar = dbc.Navbar(
             href="/",
             style={"display": "flex", "alignItems": "center"},
         ),
-        # Desktop nav — hidden on mobile
-        dbc.Nav([
-            dbc.NavLink("🏠 Dashboard",  href="/",          active="exact"),
-            dbc.NavLink("💸 Expenses",   href="/expenses",  active="exact"),
-            dbc.NavLink("📊 Portfolio",  href="/portfolio", active="exact"),
-        ], navbar=True, pills=True, className="d-none d-md-flex"),
     ], fluid=True),
     color="#1e1e2e",
     dark=True,
@@ -58,35 +52,33 @@ navbar = dbc.Navbar(
     style={"borderBottom": "1px solid #2a2a3e", "zIndex": 1050},
 )
 
-# Mobile bottom tab bar — visible only on small screens
-bottom_tabs = html.Div(
+# Top tab strip — visible on all screen sizes, browser-tab style
+top_tabs = html.Div(
     [
         dcc.Link(
             [html.Span("🏠", className="tab-icon"), html.Span("Dashboard", className="tab-label")],
-            href="/", className="bottom-tab", id="tab-home",
+            href="/", className="top-tab", id="tab-home",
         ),
         dcc.Link(
             [html.Span("💸", className="tab-icon"), html.Span("Expenses", className="tab-label")],
-            href="/expenses", className="bottom-tab", id="tab-expenses",
+            href="/expenses", className="top-tab", id="tab-expenses",
         ),
         dcc.Link(
             [html.Span("📊", className="tab-icon"), html.Span("Portfolio", className="tab-label")],
-            href="/portfolio", className="bottom-tab", id="tab-portfolio",
+            href="/portfolio", className="top-tab", id="tab-portfolio",
         ),
     ],
-    id="bottom-tab-bar",
-    className="d-flex d-md-none",
+    id="top-tab-strip",
 )
 
 app.layout = html.Div([
     dcc.Location(id="url"),
     navbar,
+    top_tabs,
     html.Div(
         dash.page_container,
-        style={"padding": "72px 20px 40px"},
         className="page-content",
     ),
-    bottom_tabs,
 ], style={"background": "#0e0e1a", "minHeight": "100vh"})
 
 @callback(
@@ -96,7 +88,7 @@ app.layout = html.Div([
     Input("url", "pathname"),
 )
 def _highlight_tab(path):
-    base = "bottom-tab"
+    base = "top-tab"
     active = f"{base} active"
     home      = active if path == "/"          else base
     expenses  = active if path == "/expenses"  else base
