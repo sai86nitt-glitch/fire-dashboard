@@ -101,19 +101,32 @@ input.dash-input::placeholder { color: #666 !important; }
 ::-webkit-scrollbar-thumb { background: #3a3a5e; border-radius: 3px; }
 
 /* ── Navbar browser-style tabs ───────────────────────────────────────────── */
+
+/* Kill Bootstrap's default navbar vertical padding */
+.navbar {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.navbar > .container-fluid {
+  align-items: flex-end !important;
+  height: 52px;
+  padding-bottom: 0 !important;
+}
+
 .nav-tab-group {
   display: flex;
   align-items: flex-end;
-  height: 52px;
   gap: 3px;
-  padding-top: 10px;
+  padding: 0;
+  margin: 0;
 }
 
 .nav-tab {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 12px 7px;
+  padding: 6px 14px 7px;
   font-size: 12px;
   color: #888 !important;
   text-decoration: none !important;
@@ -121,7 +134,7 @@ input.dash-input::placeholder { color: #666 !important; }
   border: 1px solid #2a2a3e;
   border-bottom: none;
   border-radius: 7px 7px 0 0;
-  margin-bottom: -1px;   /* sit on top of navbar's border-bottom */
+  margin-bottom: -1px;  /* overlap the navbar border-bottom */
   white-space: nowrap;
   transition: color 0.15s, background 0.15s;
 }
@@ -131,7 +144,7 @@ input.dash-input::placeholder { color: #666 !important; }
   background: #252535;
 }
 
-/* Active tab: same bg as page, erases navbar border underneath */
+/* Active: same bg as page, border-bottom colour matches page → seamless merge */
 .nav-tab.active {
   color: #e0e0e0 !important;
   background: #0e0e1a;

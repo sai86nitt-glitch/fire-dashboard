@@ -267,6 +267,7 @@ def layout():
                 "rowSelection": "multiple",
                 "rowMultiSelectWithClick": True,
                 "suppressRowClickSelection": False,
+                "suppressCellFocus": True,
             },
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
