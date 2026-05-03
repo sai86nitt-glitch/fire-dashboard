@@ -100,59 +100,49 @@ input.dash-input::placeholder { color: #666 !important; }
 ::-webkit-scrollbar-track { background: #1e1e2e; }
 ::-webkit-scrollbar-thumb { background: #3a3a5e; border-radius: 3px; }
 
-/* ── Browser-style top tab strip ─────────────────────────────────────────── */
-#top-tab-strip {
-  position: fixed;
-  top: 56px;               /* sits flush below the navbar */
-  left: 0;
-  right: 0;
+/* ── Navbar browser-style tabs ───────────────────────────────────────────── */
+.nav-tab-group {
   display: flex;
   align-items: flex-end;
-  background: #13131f;     /* slightly darker "shelf" behind the tabs */
-  border-bottom: 1px solid #2a2a3e;
-  z-index: 1049;
-  padding: 6px 4px 0;
+  height: 52px;
   gap: 3px;
+  padding-top: 10px;
 }
 
-.top-tab {
-  flex: 1;
-  display: flex;
+.nav-tab {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 5px;
-  padding: 7px 8px 8px;
+  padding: 5px 12px 7px;
   font-size: 12px;
   color: #888 !important;
   text-decoration: none !important;
   background: #1e1e2e;
   border: 1px solid #2a2a3e;
   border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  transition: color 0.15s, background 0.15s;
+  border-radius: 7px 7px 0 0;
+  margin-bottom: -1px;   /* sit on top of navbar's border-bottom */
   white-space: nowrap;
-  overflow: hidden;
+  transition: color 0.15s, background 0.15s;
 }
 
-.top-tab:hover {
+.nav-tab:hover {
   color: #ccc !important;
   background: #252535;
 }
 
-/* Active tab merges into the page — same background, hides the bottom border */
-.top-tab.active {
+/* Active tab: same bg as page, erases navbar border underneath */
+.nav-tab.active {
   color: #e0e0e0 !important;
   background: #0e0e1a;
   border-color: #3a3a5e;
-  /* cover the strip's border-bottom so tab appears connected to page */
-  margin-bottom: -1px;
-  padding-bottom: 9px;
+  border-bottom: 1px solid #0e0e1a;
 }
 
-.tab-icon  { font-size: 15px; line-height: 1; flex-shrink: 0; }
-.tab-label { font-size: 12px; letter-spacing: 0.01em; overflow: hidden; text-overflow: ellipsis; }
+.nav-tab-icon  { font-size: 14px; line-height: 1; }
+.nav-tab-label { font-size: 12px; letter-spacing: 0.01em; }
 
-/* Page content: offset below navbar + tab strip */
+/* Page content: just below the 52px navbar */
 .page-content {
-  padding: 110px 20px 40px;
+  padding: 60px 20px 40px;
 }

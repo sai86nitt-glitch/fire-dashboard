@@ -26,55 +26,61 @@ app = dash.Dash(
 server = app.server
 
 navbar = dbc.Navbar(
-    dbc.Container([
-        dbc.NavbarBrand(
-            [
-                html.Img(src="/assets/logo.svg", height="32px",
-                         style={"marginRight": "8px", "verticalAlign": "middle"}),
-                html.Span("Swai", style={
-                    "fontWeight": "700", "fontSize": "18px",
-                    "color": "#e0e0e0", "letterSpacing": "0.04em",
-                    "verticalAlign": "middle",
-                }),
-                html.Span(" Finance", style={
-                    "fontWeight": "400", "fontSize": "14px",
-                    "color": "#888", "letterSpacing": "0.02em",
-                    "verticalAlign": "middle",
-                }),
-            ],
-            href="/",
-            style={"display": "flex", "alignItems": "center"},
-        ),
-    ], fluid=True),
-    color="#1e1e2e",
+    dbc.Container(
+        [
+            # Left: browser-style tabs
+            html.Div(
+                [
+                    dcc.Link(
+                        [html.Span("🏠", className="nav-tab-icon"),
+                         html.Span("Dashboard", className="nav-tab-label")],
+                        href="/", className="nav-tab", id="tab-home",
+                    ),
+                    dcc.Link(
+                        [html.Span("💸", className="nav-tab-icon"),
+                         html.Span("Expenses", className="nav-tab-label")],
+                        href="/expenses", className="nav-tab", id="tab-expenses",
+                    ),
+                    dcc.Link(
+                        [html.Span("📊", className="nav-tab-icon"),
+                         html.Span("Portfolio", className="nav-tab-label")],
+                        href="/portfolio", className="nav-tab", id="tab-portfolio",
+                    ),
+                ],
+                className="nav-tab-group",
+            ),
+            # Right: brand
+            dbc.NavbarBrand(
+                [
+                    html.Img(src="/assets/logo.svg", height="26px",
+                             style={"marginRight": "7px", "verticalAlign": "middle"}),
+                    html.Span("Swai", style={
+                        "fontWeight": "700", "fontSize": "16px",
+                        "color": "#e0e0e0", "letterSpacing": "0.04em",
+                        "verticalAlign": "middle",
+                    }),
+                    html.Span(" Finance", style={
+                        "fontWeight": "400", "fontSize": "13px",
+                        "color": "#888", "verticalAlign": "middle",
+                    }),
+                ],
+                href="/",
+                className="ms-auto",
+                style={"display": "flex", "alignItems": "center"},
+            ),
+        ],
+        fluid=True,
+        style={"alignItems": "flex-end", "height": "100%"},
+    ),
+    color="#13131f",
     dark=True,
     fixed="top",
-    style={"borderBottom": "1px solid #2a2a3e", "zIndex": 1050},
-)
-
-# Top tab strip — visible on all screen sizes, browser-tab style
-top_tabs = html.Div(
-    [
-        dcc.Link(
-            [html.Span("🏠", className="tab-icon"), html.Span("Dashboard", className="tab-label")],
-            href="/", className="top-tab", id="tab-home",
-        ),
-        dcc.Link(
-            [html.Span("💸", className="tab-icon"), html.Span("Expenses", className="tab-label")],
-            href="/expenses", className="top-tab", id="tab-expenses",
-        ),
-        dcc.Link(
-            [html.Span("📊", className="tab-icon"), html.Span("Portfolio", className="tab-label")],
-            href="/portfolio", className="top-tab", id="tab-portfolio",
-        ),
-    ],
-    id="top-tab-strip",
+    style={"height": "52px", "borderBottom": "1px solid #2a2a3e", "zIndex": 1050},
 )
 
 app.layout = html.Div([
     dcc.Location(id="url"),
     navbar,
-    top_tabs,
     html.Div(
         dash.page_container,
         className="page-content",
@@ -88,7 +94,7 @@ app.layout = html.Div([
     Input("url", "pathname"),
 )
 def _highlight_tab(path):
-    base = "top-tab"
+    base = "nav-tab"
     active = f"{base} active"
     home      = active if path == "/"          else base
     expenses  = active if path == "/expenses"  else base

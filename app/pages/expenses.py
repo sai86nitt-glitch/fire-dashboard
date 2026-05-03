@@ -24,12 +24,26 @@ _INPUT_STYLE = {
 
 dash.register_page(__name__, path="/expenses", title="Expenses")
 
+_TOP_N_CATS = 15
+
 def _blank():
     f = go.Figure()
     f.update_layout(paper_bgcolor="#1e1e2e", plot_bgcolor="#1e1e2e",
                     xaxis={"visible": False}, yaxis={"visible": False},
                     margin={"t": 10, "b": 10, "l": 10, "r": 10})
     return f
+
+def _top_cats_with_others(expenses, n=_TOP_N_CATS):
+    """Return (DataFrame with top n cats + Others row, set of top cat names)."""
+    totals = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False)
+    top    = totals.head(n)
+    top_names = set(top.index.tolist())
+    if len(totals) > n:
+        others_sum = totals.iloc[n:].sum()
+        top = pd.concat([top, pd.Series({"Others": others_sum})])
+    df = top.reset_index()
+    df.columns = ["primary_tag", "amount"]
+    return df, top_names
 
 # ── Shared column defs for drill-down grid ────────────────────────────────────
 
@@ -363,7 +377,7 @@ def update_expenses(start, end, group_by):
         bar.update_layout(title="Expenses by Month — click a bar to drill down",
                           yaxis={"range": [0, agg["amount"].max() * 1.18]})
     elif group_by == "category":
-        agg = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False).reset_index()
+        agg, _ = _top_cats_with_others(expenses)
         bar = go.Figure([_bar_with_values(agg["primary_tag"], agg["amount"])])
         bar.update_layout(title="Expenses by Category — click a bar to drill down",
                           yaxis={"range": [0, agg["amount"].max() * 1.18]})
@@ -374,9 +388,9 @@ def update_expenses(start, end, group_by):
                           yaxis={"range": [0, agg["amount"].max() * 1.18]})
     _dark_fig(bar)
 
-    top8 = expenses.groupby("primary_tag")["amount"].sum().sort_values(ascending=False).head(8).reset_index()
+    top_df, _ = _top_cats_with_others(expenses)
     pie = go.Figure([go.Pie(
-        labels=top8["primary_tag"], values=top8["amount"],
+        labels=top_df["primary_tag"], values=top_df["amount"],
         hole=0.4, textinfo="percent+label",
         textfont={"size": 10},
         hovertemplate="%{label}<br>₹%{value:,.0f}<extra></extra>",
@@ -433,13 +447,20 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
     label = "All expenses in selected range · click a chart to filter"
     triggered = ctx.triggered_id
 
+    def _filter_by_cat(df, val):
+        """Filter by category, handling the 'Others' bucket."""
+        if val == "Others":
+            _, top_names = _top_cats_with_others(df)
+            return df[~df["primary_tag"].isin(top_names)], "Others"
+        return df[df["primary_tag"] == val], val
+
     if triggered == "exp-bar" and bar_click:
         val = bar_click["points"][0]["x"]
         if group_by == "month":
             expenses = expenses[expenses["month"] == val]
             label = f"Month: {_fmt_month(val)}"
         elif group_by == "category":
-            expenses = expenses[expenses["primary_tag"] == val]
+            expenses, val = _filter_by_cat(expenses, val)
             label = f"Category: {val}"
         else:
             expenses = expenses[expenses["account_name"].astype(str) == val]
@@ -447,7 +468,7 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
 
     elif triggered == "exp-pie" and pie_click:
         val = pie_click["points"][0]["label"]
-        expenses = expenses[expenses["primary_tag"] == val]
+        expenses, val = _filter_by_cat(expenses, val)
         label = f"Category: {val}"
 
     elif triggered == "exp-treemap" and treemap_click:

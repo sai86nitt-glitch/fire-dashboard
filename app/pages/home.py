@@ -35,6 +35,7 @@ _MONTHLY_METALS_SIP =  30_000
 _MONTHLY_EPF        =  72_000
 _TOTAL_MONTHLY_SIP  = _MONTHLY_EQUITY_SIP + _MONTHLY_METALS_SIP + _MONTHLY_EPF
 _POST_FIRE_CAGR     = 0.10
+_INR_INFLATION      = 0.06
 _TOP_CATS           = 7
 
 _INPUT_STYLE = {
@@ -82,6 +83,14 @@ def _fv_corpus(current, monthly_sip, years, cagr):
     r = cagr / 12; n = years * 12
     sip_fv = monthly_sip * ((1 + r) ** n - 1) / r if r else monthly_sip * n
     return current * (1 + cagr) ** years + sip_fv
+
+def _drawdown_corpus(corpus, annual_withdrawal, cagr, inflation, years):
+    """Simulate corpus after 'years' of annual withdrawals growing with inflation."""
+    c, w = corpus, annual_withdrawal
+    for _ in range(years):
+        c = c * (1 + cagr) - w
+        w *= (1 + inflation)
+    return c
 
 def _simple_buckets(acc_df):
     buckets = {}
@@ -458,44 +467,73 @@ def refresh(_n):
     yrs_edu       = _EDU_YEAR  - today.year
     yrs_post_fire = _EDU_YEAR  - _FIRE_YEAR
 
-    fire_tgt  = _FIRE_MULT * avg_exp * 12
-    edu_tgt   = _EDU_USD * (1 + _USD_INFLATION)**yrs_edu * _USD_INR_NOW * (1 + _INR_DEPRECIATION)**yrs_edu
+    fire_tgt   = _FIRE_MULT * avg_exp * 12
+    proj_fire  = _fv_corpus(total_inv, _TOTAL_MONTHLY_SIP, yrs_fire, 0.15)
+    fire_ok    = proj_fire >= fire_tgt
 
-    proj_fire = _fv_corpus(total_inv, _TOTAL_MONTHLY_SIP, yrs_fire, 0.15)
-    proj_edu  = _fv_corpus(total_inv, _TOTAL_MONTHLY_SIP, yrs_fire, 0.15) * (1 + _POST_FIRE_CAGR)**yrs_post_fire
+    # Monthly expense at 2036 (inflation-adjusted from now)
+    monthly_at_fire  = avg_exp * (1 + _INR_INFLATION) ** yrs_fire
+    annual_at_fire   = monthly_at_fire * 12
 
-    def _ret_row(icon, label, year, tgt, proj):
-        on_track = proj >= tgt
-        col = "#00c49f" if on_track else "#ff6b6b"
-        marker = "✓" if on_track else "▼"
-        return html.Tr([
-            html.Td(f"{icon} {label}", style={"fontSize": "11px", "color": "#e0e0e0"}),
-            html.Td(str(year),         style={"fontSize": "11px", "color": "#888"}),
-            html.Td(fmt_inr(tgt),      style={"fontSize": "11px", "fontFamily": "monospace",
-                                               "textAlign": "right", "color": "#aaa"}),
-            html.Td(f"{marker} {fmt_inr(proj)}",
-                    style={"fontSize": "11px", "fontFamily": "monospace",
-                           "textAlign": "right", "color": col}),
-        ])
+    # Corpus at 2041 after 5 years of drawdown + 10% portfolio growth
+    corpus_2041 = _drawdown_corpus(proj_fire, annual_at_fire,
+                                   _POST_FIRE_CAGR, _INR_INFLATION, yrs_post_fire)
+
+    # Education cost at 2041 (USD inflation + INR depreciation)
+    edu_tgt = (_EDU_USD * (1 + _USD_INFLATION) ** yrs_edu
+               * _USD_INR_NOW * (1 + _INR_DEPRECIATION) ** yrs_edu)
+
+    net_2041  = corpus_2041 - edu_tgt
+    net_ok    = net_2041 > 0
+
+    def _kv(label, value, color="#aaa", mono=True):
+        return html.Div([
+            html.Span(label, style={"fontSize": "10px", "color": "#666",
+                                    "display": "inline-block", "width": "130px"}),
+            html.Span(value, style={"fontSize": "11px", "color": color,
+                                    "fontFamily": "monospace" if mono else "inherit",
+                                    "fontWeight": "600"}),
+        ], style={"marginBottom": "3px"})
+
+    def _section_title(text):
+        return html.Div(text, style={"fontSize": "10px", "color": "#555",
+                                     "textTransform": "uppercase", "letterSpacing": "0.08em",
+                                     "marginTop": "10px", "marginBottom": "6px",
+                                     "borderTop": "1px solid #2a2a3e", "paddingTop": "8px"})
 
     ret_panel = html.Div([
-        dbc.Table([
-            html.Thead(html.Tr([
-                html.Th("Goal",   style={"fontSize": "10px", "color": "#555"}),
-                html.Th("Year",   style={"fontSize": "10px", "color": "#555"}),
-                html.Th("Target", style={"fontSize": "10px", "color": "#555",
-                                         "textAlign": "right"}),
-                html.Th("@ 15%",  style={"fontSize": "10px", "color": "#555",
-                                          "textAlign": "right"}),
-            ])),
-            html.Tbody([
-                _ret_row("🔥", "FIRE",      _FIRE_YEAR, fire_tgt, proj_fire),
-                _ret_row("🎓", "Education", _EDU_YEAR,  edu_tgt,  proj_edu),
-            ]),
-        ], bordered=False, size="sm", style={"color": "#e0e0e0"}),
+        # ── FIRE @ 2036 ──────────────────────────────────────────────────────
+        html.Div("🔥 FIRE — 2036", style={"fontSize": "12px", "fontWeight": "600",
+                                           "color": "#e0e0e0", "marginBottom": "6px"}),
+        _kv("Need (25× expenses)", fmt_inr(fire_tgt)),
+        _kv("Projected @ 15% CAGR",
+            f"{'✓' if fire_ok else '▼'} {fmt_inr(proj_fire)}",
+            "#00c49f" if fire_ok else "#ff6b6b"),
+        _kv("Expense at 2036",
+            f"{fmt_inr(monthly_at_fire)}/mo  ({fmt_inr(avg_exp)}/mo today)"),
+
+        # ── After FIRE: 2036 → 2041 ──────────────────────────────────────────
+        _section_title("After FIRE — 2036 → 2041"),
+        _kv("Start corpus", fmt_inr(proj_fire), "#ccc"),
+        _kv("Withdrawal (start)",
+            f"{fmt_inr(monthly_at_fire)}/mo growing {int(_INR_INFLATION*100)}%/yr"),
+        _kv("Portfolio growth", f"{int(_POST_FIRE_CAGR*100)}% CAGR"),
+        _kv("Corpus at 2041", fmt_inr(corpus_2041),
+            "#00c49f" if corpus_2041 > 0 else "#ff6b6b"),
+
+        # ── Education @ 2041 ─────────────────────────────────────────────────
+        _section_title("🎓 Education — 2041"),
+        _kv("Cost ($400K in 2041 ₹)", fmt_inr(edu_tgt)),
+        _kv("Corpus available",       fmt_inr(corpus_2041), "#ccc"),
+        _kv("Net retirement corpus",
+            f"{'✓' if net_ok else '▼'} {fmt_inr(net_2041)}",
+            "#00c49f" if net_ok else "#ff6b6b"),
+
+        # ── Footer ───────────────────────────────────────────────────────────
         html.Div(
-            f"Current corpus: {fmt_inr(total_inv)}  ·  SIPs: {fmt_inr(_TOTAL_MONTHLY_SIP)}/mo",
-            style={"fontSize": "10px", "color": "#555"},
+            f"Corpus: {fmt_inr(total_inv)}  ·  SIPs: {fmt_inr(_TOTAL_MONTHLY_SIP)}/mo",
+            style={"fontSize": "10px", "color": "#444", "marginTop": "10px",
+                   "borderTop": "1px solid #2a2a3e", "paddingTop": "6px"},
         ),
     ])
 
