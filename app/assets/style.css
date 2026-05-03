@@ -99,3 +99,49 @@ input.dash-input::placeholder { color: #666 !important; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #1e1e2e; }
 ::-webkit-scrollbar-thumb { background: #3a3a5e; border-radius: 3px; }
+
+/* ── Bottom tab bar (mobile) ─────────────────────────────────────────────── */
+#bottom-tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: #1e1e2e;
+  border-top: 1px solid #2a2a3e;
+  z-index: 1050;
+  justify-content: space-around;
+  align-items: stretch;
+}
+
+.bottom-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #888 !important;
+  text-decoration: none !important;
+  font-size: 11px;
+  gap: 3px;
+  border-top: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.bottom-tab:hover {
+  color: #ccc !important;
+}
+
+.bottom-tab.active,
+.bottom-tab[aria-current="page"] {
+  color: #a78bfa !important;
+  border-top-color: #a78bfa;
+}
+
+.tab-icon  { font-size: 20px; line-height: 1; }
+.tab-label { font-size: 10px; letter-spacing: 0.03em; }
+
+/* Extra bottom padding on mobile so content isn't hidden behind tab bar */
+@media (max-width: 767px) {
+  .page-content { padding-bottom: 72px !important; }
+}

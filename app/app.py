@@ -1,6 +1,6 @@
 import dash
 import dash_bootstrap_components as dbc
-from dash import html, dcc
+from dash import html, dcc, Input, Output, callback
 
 app = dash.Dash(
     __name__,
@@ -45,16 +45,37 @@ navbar = dbc.Navbar(
             href="/",
             style={"display": "flex", "alignItems": "center"},
         ),
+        # Desktop nav — hidden on mobile
         dbc.Nav([
             dbc.NavLink("🏠 Dashboard",  href="/",          active="exact"),
             dbc.NavLink("💸 Expenses",   href="/expenses",  active="exact"),
             dbc.NavLink("📊 Portfolio",  href="/portfolio", active="exact"),
-        ], navbar=True, pills=True),
+        ], navbar=True, pills=True, className="d-none d-md-flex"),
     ], fluid=True),
     color="#1e1e2e",
     dark=True,
     fixed="top",
     style={"borderBottom": "1px solid #2a2a3e", "zIndex": 1050},
+)
+
+# Mobile bottom tab bar — visible only on small screens
+bottom_tabs = html.Div(
+    [
+        dcc.Link(
+            [html.Span("🏠", className="tab-icon"), html.Span("Dashboard", className="tab-label")],
+            href="/", className="bottom-tab", id="tab-home",
+        ),
+        dcc.Link(
+            [html.Span("💸", className="tab-icon"), html.Span("Expenses", className="tab-label")],
+            href="/expenses", className="bottom-tab", id="tab-expenses",
+        ),
+        dcc.Link(
+            [html.Span("📊", className="tab-icon"), html.Span("Portfolio", className="tab-label")],
+            href="/portfolio", className="bottom-tab", id="tab-portfolio",
+        ),
+    ],
+    id="bottom-tab-bar",
+    className="d-flex d-md-none",
 )
 
 app.layout = html.Div([
@@ -63,8 +84,25 @@ app.layout = html.Div([
     html.Div(
         dash.page_container,
         style={"padding": "72px 20px 40px"},
+        className="page-content",
     ),
+    bottom_tabs,
 ], style={"background": "#0e0e1a", "minHeight": "100vh"})
+
+@callback(
+    Output("tab-home",      "className"),
+    Output("tab-expenses",  "className"),
+    Output("tab-portfolio", "className"),
+    Input("url", "pathname"),
+)
+def _highlight_tab(path):
+    base = "bottom-tab"
+    active = f"{base} active"
+    home      = active if path == "/"          else base
+    expenses  = active if path == "/expenses"  else base
+    portfolio = active if path == "/portfolio" else base
+    return home, expenses, portfolio
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=8502)

@@ -755,7 +755,12 @@ def drill_transactions(bar_click, _clear, _refresh):
 
     if triggered == "home-stacked-bar" and bar_click:
         pt    = bar_click["points"][0]
-        month = pt["x"]
+        month_raw = str(pt["x"])
+        # Plotly may parse "2026-03" as a date and return "2026-03-01"
+        try:
+            month = str(pd.to_datetime(month_raw).to_period("M"))
+        except Exception:
+            month = month_raw[:7]
         cat   = pt.get("data", {}).get("name", None)
         txns  = txns[txns["month"] == month]
         try:
