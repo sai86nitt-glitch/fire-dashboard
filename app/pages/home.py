@@ -213,9 +213,44 @@ def layout():
         ),
         html.Small(id="home-txn-caption",
                    style={"color": "#666", "marginTop": "4px", "display": "block"}),
-        html.Div(id="home-row-detail", style={"marginTop": "6px"}),
 
-        dcc.Store(id="home-row-tag-opts", data=tag_opts),
+        # ── Tag editor modal (replaces inline panel — works on mobile) ─────────
+        dbc.Modal([
+            dbc.ModalHeader(
+                html.Div(id="home-modal-desc",
+                         style={"fontWeight": "600", "fontSize": "14px",
+                                "color": "#e0e0e0"}),
+                close_button=True,
+            ),
+            dbc.ModalBody([
+                html.Div(id="home-modal-meta",
+                         style={"fontSize": "11px", "color": "#888",
+                                "marginBottom": "12px"}),
+                dbc.Row([
+                    dbc.Col(
+                        dcc.Dropdown(
+                            id="home-row-tag-dropdown",
+                            options=tag_opts,
+                            value=[],
+                            multi=True,
+                            placeholder="Search or pick a category…",
+                            style={"fontSize": "13px"},
+                        ),
+                        md=9,
+                    ),
+                    dbc.Col(
+                        dbc.Button("✓ Save Tag", id="home-row-save-btn",
+                                   color="primary", size="sm", className="w-100"),
+                        md=3,
+                    ),
+                ]),
+                html.Div(id="home-row-save-feedback", className="mt-2"),
+            ]),
+        ], id="home-tag-modal", is_open=False, centered=True),
+
+        dcc.Store(id="home-row-tag-opts",        data=tag_opts),
+        dcc.Store(id="home-row-detail-id",       data=None),
+        dcc.Store(id="home-row-detail-merchant", data=None),
         dcc.Interval(id="home-refresh", interval=5 * 60 * 1000, n_intervals=0),
     ])
 
@@ -591,7 +626,6 @@ def update_ai_banner(_n):
     Output("home-txn-grid",    "rowData"),
     Output("home-txn-label",   "children"),
     Output("home-txn-caption", "children"),
-    Output("home-row-detail",  "children", allow_duplicate=True),
     Input("home-stacked-bar",  "clickData"),
     Input("home-txn-clear",    "n_clicks"),
     Input("home-refresh",      "n_intervals"),
@@ -623,22 +657,26 @@ def drill_transactions(bar_click, _clear, _refresh):
 
     rows    = _to_rows(txns)
     caption = f"{len(rows):,} transactions · click a row to view / edit tags"
-    _EXPLICIT = {"home-stacked-bar", "home-txn-clear"}
-    close_panel = triggered in _EXPLICIT
-    return rows, label, caption, (None if close_panel else no_update)
+    return rows, label, caption
 
 
-# ── Row click → inline tag editor ────────────────────────────────────────────
+# ── Row click → modal tag editor ─────────────────────────────────────────────
 
 @callback(
-    Output("home-row-detail",  "children"),
-    Input("home-txn-grid",     "selectedRows"),
-    State("home-row-tag-opts", "data"),
+    Output("home-tag-modal",           "is_open"),
+    Output("home-modal-desc",          "children"),
+    Output("home-modal-meta",          "children"),
+    Output("home-row-tag-dropdown",    "options"),
+    Output("home-row-tag-dropdown",    "value"),
+    Output("home-row-detail-id",       "data"),
+    Output("home-row-detail-merchant", "data"),
+    Input("home-txn-grid",             "selectedRows"),
+    State("home-row-tag-opts",         "data"),
     prevent_initial_call=True,
 )
 def home_show_detail(selected_rows, tag_opts):
     if not selected_rows:
-        return no_update
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update
     row = selected_rows[0]
 
     current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
@@ -650,55 +688,10 @@ def home_show_detail(selected_rows, tag_opts):
                       row.get("description", "")).split() if len(w) >= 3]
     merchant_token = merchant_words[0] if merchant_words else ""
 
-    return html.Div([
-        dbc.Row([
-            dbc.Col([
-                html.Div(row["description"],
-                         style={"fontWeight": "600", "fontSize": "13px",
-                                "color": "#e0e0e0", "marginBottom": "2px"}),
-                html.Div(
-                    f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}",
-                    style={"fontSize": "11px", "color": "#888"},
-                ),
-            ]),
-            dbc.Col(
-                dbc.Button("✕", id="home-row-close", size="sm", color="secondary",
-                           outline=True, style={"float": "right"}),
-                width="auto",
-            ),
-        ], className="mb-2 align-items-start"),
-
-        html.Hr(style={"borderColor": "#2a2a3e", "margin": "8px 0"}),
-
-        dbc.Row([
-            dbc.Col(
-                dcc.Dropdown(
-                    id="home-row-tag-dropdown",
-                    options=tag_opts or [],
-                    value=valid_defaults,
-                    multi=True,
-                    placeholder="Search or pick a category…",
-                    style={"fontSize": "13px"},
-                ),
-                md=9,
-            ),
-            dbc.Col(
-                dbc.Button("✓ Save Tag", id="home-row-save-btn", color="primary",
-                           size="sm", className="w-100"),
-                md=3,
-            ),
-        ]),
-
-        html.Div(id="home-row-save-feedback", className="mt-2"),
-        dcc.Store(id="home-row-detail-id",       data=row.get("id")),
-        dcc.Store(id="home-row-detail-merchant", data=merchant_token),
-
-    ], style={
-        "padding": "12px 18px",
-        "background": "#1a1a2e",
-        "borderLeft": "3px solid #6c63ff",
-        "borderRadius": "0 6px 6px 0",
-    })
+    meta = f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}"
+    return (True, row["description"], meta,
+            tag_opts or [], valid_defaults,
+            row.get("id"), merchant_token)
 
 
 @callback(
@@ -723,11 +716,3 @@ def home_save_tag(n_clicks, chosen_tags, row_id, merchant, row_data):
     return dbc.Alert(f"✅ Saved: {tags_str}", color="success", duration=3000), updated
 
 
-@callback(
-    Output("home-row-detail",  "children", allow_duplicate=True),
-    Output("home-txn-grid",    "selectedRows"),
-    Input("home-row-close",    "n_clicks"),
-    prevent_initial_call=True,
-)
-def home_close_detail(_):
-    return None, []

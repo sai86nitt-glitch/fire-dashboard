@@ -138,11 +138,44 @@ def layout():
         ),
         html.Small(id="exp-txn-caption", style={"color": "#666", "marginTop": "4px", "display": "block"}),
 
-        # ── Inline row detail / tag editor ────────────────────────────────────
-        html.Div(id="exp-row-detail", style={"marginTop": "6px"}),
+        # ── Tag editor modal ──────────────────────────────────────────────────
+        dbc.Modal([
+            dbc.ModalHeader(
+                html.Div(id="exp-modal-desc",
+                         style={"fontWeight": "600", "fontSize": "14px",
+                                "color": "#e0e0e0"}),
+                close_button=True,
+            ),
+            dbc.ModalBody([
+                html.Div(id="exp-modal-meta",
+                         style={"fontSize": "11px", "color": "#888",
+                                "marginBottom": "12px"}),
+                dbc.Row([
+                    dbc.Col(
+                        dcc.Dropdown(
+                            id="exp-row-tag-dropdown",
+                            options=tag_opts,
+                            value=[],
+                            multi=True,
+                            placeholder="Search or pick a category…",
+                            style={"fontSize": "13px"},
+                        ),
+                        md=9,
+                    ),
+                    dbc.Col(
+                        dbc.Button("✓ Save Tag", id="exp-row-save-btn",
+                                   color="primary", size="sm", className="w-100"),
+                        md=3,
+                    ),
+                ]),
+                html.Div(id="exp-row-save-feedback", className="mt-2"),
+            ]),
+        ], id="exp-tag-modal", is_open=False, centered=True),
 
-        # Hidden stores
-        dcc.Store(id="exp-row-tag-opts", data=tag_opts),
+        # Stores
+        dcc.Store(id="exp-row-tag-opts",        data=tag_opts),
+        dcc.Store(id="exp-row-detail-id",       data=None),
+        dcc.Store(id="exp-row-detail-merchant", data=None),
     ])
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -292,7 +325,6 @@ def update_expenses(start, end, group_by):
     Output("exp-txn-grid",    "rowData"),
     Output("exp-txn-label",   "children"),
     Output("exp-txn-caption", "children"),
-    Output("exp-row-detail",  "children", allow_duplicate=True),
     Input("exp-bar",          "clickData"),
     Input("exp-pie",          "clickData"),
     Input("exp-treemap",      "clickData"),
@@ -337,35 +369,34 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
         click_parent = pt.get("parent", "")
 
         if click_parent and click_parent not in ("", "Expenses"):
-            # Leaf level: parent = category, label = month
             expenses = expenses[(expenses["primary_tag"] == click_parent) &
                                 (expenses["month"] == click_label)]
             label = f"{click_parent} · {_fmt_month(click_label)}"
         elif click_label and click_label != "Expenses":
-            # Category level: parent = Expenses, label = category
             expenses = expenses[expenses["primary_tag"] == click_label]
             label = f"Category: {click_label}"
 
     rows    = _to_rows(expenses)
     caption = f"{len(rows):,} transactions · click a row to view / edit tags"
-    # Only close the detail panel when user explicitly changed the filter via a
-    # chart click or Clear — not on passive date/group-by changes (which would
-    # wipe an open tag editor on mobile just from page initialisation).
-    _EXPLICIT_TRIGGERS = {"exp-bar", "exp-pie", "exp-treemap", "exp-txn-clear"}
-    close_panel = triggered in _EXPLICIT_TRIGGERS
-    return rows, label, caption, (None if close_panel else no_update)
+    return rows, label, caption
 
-# ── Row click → inline tag editor ────────────────────────────────────────────
+# ── Row click → modal tag editor ─────────────────────────────────────────────
 
 @callback(
-    Output("exp-row-detail",  "children"),
-    Input("exp-txn-grid",     "selectedRows"),
-    State("exp-row-tag-opts", "data"),
+    Output("exp-tag-modal",            "is_open"),
+    Output("exp-modal-desc",           "children"),
+    Output("exp-modal-meta",           "children"),
+    Output("exp-row-tag-dropdown",     "options"),
+    Output("exp-row-tag-dropdown",     "value"),
+    Output("exp-row-detail-id",        "data"),
+    Output("exp-row-detail-merchant",  "data"),
+    Input("exp-txn-grid",              "selectedRows"),
+    State("exp-row-tag-opts",          "data"),
     prevent_initial_call=True,
 )
 def exp_show_detail(selected_rows, tag_opts):
     if not selected_rows:
-        return no_update
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update
     row = selected_rows[0]
 
     current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
@@ -377,55 +408,10 @@ def exp_show_detail(selected_rows, tag_opts):
                       row.get("description", "")).split() if len(w) >= 3]
     merchant_token = merchant_words[0] if merchant_words else ""
 
-    return html.Div([
-        dbc.Row([
-            dbc.Col([
-                html.Div(row["description"],
-                         style={"fontWeight": "600", "fontSize": "13px",
-                                "color": "#e0e0e0", "marginBottom": "2px"}),
-                html.Div(
-                    f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}",
-                    style={"fontSize": "11px", "color": "#888"},
-                ),
-            ]),
-            dbc.Col(
-                dbc.Button("✕", id="exp-row-close", size="sm", color="secondary",
-                           outline=True, style={"float": "right"}),
-                width="auto",
-            ),
-        ], className="mb-2 align-items-start"),
-
-        html.Hr(style={"borderColor": "#2a2a3e", "margin": "8px 0"}),
-
-        dbc.Row([
-            dbc.Col(
-                dcc.Dropdown(
-                    id="exp-row-tag-dropdown",
-                    options=tag_opts or [],
-                    value=valid_defaults,
-                    multi=True,
-                    placeholder="Search or pick a category…",
-                    style={"fontSize": "13px"},
-                ),
-                md=9,
-            ),
-            dbc.Col([
-                dbc.Button("✓ Save Tag", id="exp-row-save-btn", color="primary",
-                           size="sm", className="w-100"),
-            ], md=3),
-        ]),
-
-        html.Div(id="exp-row-save-feedback", className="mt-2"),
-
-        dcc.Store(id="exp-row-detail-id",       data=row.get("id")),
-        dcc.Store(id="exp-row-detail-merchant", data=merchant_token),
-
-    ], style={
-        "padding": "12px 18px",
-        "background": "#1a1a2e",
-        "borderLeft": "3px solid #6c63ff",
-        "borderRadius": "0 6px 6px 0",
-    })
+    meta = f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}"
+    return (True, row["description"], meta,
+            tag_opts or [], valid_defaults,
+            row.get("id"), merchant_token)
 
 
 @callback(
@@ -448,20 +434,6 @@ def exp_save_tag(n_clicks, chosen_tags, row_id, merchant, row_data):
     if not saved:
         return dbc.Alert("❌ Save failed.", color="danger", duration=4000), no_update
 
-    updated = []
-    for r in (row_data or []):
-        if r.get("id") == row_id:
-            r = {**r, "tags": tags_str}
-        updated.append(r)
-
+    updated = [{**r, "tags": tags_str} if r.get("id") == row_id else r
+               for r in (row_data or [])]
     return dbc.Alert(f"✅ Saved: {tags_str}", color="success", duration=3000), updated
-
-
-@callback(
-    Output("exp-row-detail",  "children", allow_duplicate=True),
-    Output("exp-txn-grid",    "selectedRows"),
-    Input("exp-row-close",    "n_clicks"),
-    prevent_initial_call=True,
-)
-def exp_close_detail(_):
-    return None, []
