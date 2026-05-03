@@ -324,7 +324,11 @@ def refresh_portfolio(_n):
         marker_colors=bucket_colours,
         hovertemplate="%{label}<br>%{value:,.0f}<br>%{percent}<extra></extra>",
     )])
-    pie.update_layout(title="Asset Allocation (by detected category)", showlegend=False)
+    pie.update_layout(
+        title="Asset Allocation — Gold/Silver ETFs (AXISGOLD, ICICISILVE) are inside<br>"
+              "your brokerage account in Buxfer, so they count under Equity MF here",
+        showlegend=False,
+    )
     _dark_fig(pie)
 
     # ── Actual vs target bar ──────────────────────────────────────────────────
@@ -401,29 +405,76 @@ def refresh_portfolio(_n):
             ),
         ])
 
-    # ── Corpus goals ──────────────────────────────────────────────────────────
-    yrs_fire     = _FIRE_YEAR - today.year
-    yrs_edu      = _EDU_YEAR  - today.year
-    yrs_post_fire = _EDU_YEAR - _FIRE_YEAR           # = 5 yrs between FIRE and edu
-    fire_tgt     = _fire_target(avg_exp)
-    edu_tgt      = _edu_target_inr(yrs_edu)
+    # ── Corpus goals — combined FIRE + Education ──────────────────────────────
+    yrs_fire      = _FIRE_YEAR - today.year
+    yrs_edu       = _EDU_YEAR  - today.year
+    yrs_post_fire = _EDU_YEAR  - _FIRE_YEAR          # 5 yrs between FIRE and edu
+    fire_tgt      = _fire_target(avg_exp)
+    edu_tgt       = _edu_target_inr(yrs_edu)
+
+    # Education reserve needed AT 2036 so it grows to edu_tgt by 2041
+    edu_reserve_at_fire = edu_tgt / (1 + _POST_FIRE_CAGR) ** yrs_post_fire
+    combined_tgt        = fire_tgt + edu_reserve_at_fire
+
+    # Use total_inv (investable corpus, excluding debt) for progress tracking
+    current_corpus = total_inv
+
+    pct    = min(current_corpus / combined_tgt * 100, 100) if combined_tgt else 0
+    bar_col = "#00c49f" if pct >= 75 else ("#ffc107" if pct >= 40 else "#ff6b6b")
 
     goals = [
-        _progress_card("FIRE Corpus", "🔥", nw, fire_tgt, _FIRE_YEAR, "#6c63ff"),
-        _progress_card("Education Corpus", "🎓", nw, edu_tgt, _EDU_YEAR, "#00c49f"),
+        dbc.Col(html.Div([
+            html.Div("🎯 Combined Goal by 2036",
+                     style={"fontSize": "13px", "fontWeight": "600",
+                            "color": "#e0e0e0", "marginBottom": "10px"}),
+            dbc.Progress(value=pct, label=f"{pct:.1f}%",
+                         style={"height": "22px", "backgroundColor": "#2a2a3e"},
+                         color=bar_col, className="mb-3"),
+            dbc.Row([
+                dbc.Col(html.Div([
+                    html.Div("Current Corpus", className="metric-label"),
+                    html.Div(fmt_inr(current_corpus),
+                             style={"fontSize": "15px", "fontWeight": "700",
+                                    "color": "#6c63ff"}),
+                ])),
+                dbc.Col(html.Div([
+                    html.Div("🔥 FIRE target", className="metric-label"),
+                    html.Div(fmt_inr(fire_tgt),
+                             style={"fontSize": "14px", "fontWeight": "600",
+                                    "color": "#e0e0e0"}),
+                    html.Div("25× annual spend",
+                             style={"fontSize": "10px", "color": "#555"}),
+                ])),
+                dbc.Col(html.Div([
+                    html.Div("🎓 Edu reserve (2036)", className="metric-label"),
+                    html.Div(fmt_inr(edu_reserve_at_fire),
+                             style={"fontSize": "14px", "fontWeight": "600",
+                                    "color": "#e0e0e0"}),
+                    html.Div(f"PV of {fmt_inr(edu_tgt)} in {_EDU_YEAR}",
+                             style={"fontSize": "10px", "color": "#555"}),
+                ])),
+                dbc.Col(html.Div([
+                    html.Div("Combined target", className="metric-label"),
+                    html.Div(fmt_inr(combined_tgt),
+                             style={"fontSize": "15px", "fontWeight": "700",
+                                    "color": "#ff6b6b"}),
+                    html.Div("gap: " + fmt_inr(max(combined_tgt - current_corpus, 0)),
+                             style={"fontSize": "10px", "color": "#aaa"}),
+                ])),
+            ]),
+        ], className="metric-card", style={"padding": "16px 20px"}), md=12),
+        dbc.Col(html.Div(
+            f"Education reserve = {fmt_inr(edu_tgt)} needed in {_EDU_YEAR} "
+            f"(${_EDU_USD//1000}L USD, 5% USD inflation + 3% INR/USD depreciation) "
+            f"→ PV at 2036 @ {int(_POST_FIRE_CAGR*100)}% = {fmt_inr(edu_reserve_at_fire)}",
+            style={"fontSize": "11px", "color": "#555", "marginTop": "4px"},
+        ), md=12),
     ]
-    goals.append(dbc.Col(html.Div(
-        f"Education target: ${_EDU_USD//1000}L USD today → "
-        f"{fmt_inr(edu_tgt)} in {_EDU_YEAR} "
-        f"(5% USD inflation + 3% INR/USD depreciation)",
-        style={"fontSize": "11px", "color": "#666", "marginTop": "4px"},
-    ), md=12))
 
     # ── Projection + shortfall table ─────────────────────────────────────────
     this_yr = today.year
 
     def _extra_sip(gap: float, years: int, cagr: float) -> float:
-        """Monthly SIP needed to grow `gap` to zero."""
         if gap <= 0 or years <= 0:
             return 0.0
         r = cagr / 12
@@ -434,9 +485,10 @@ def refresh_portfolio(_n):
     cagr_list    = list(_CAGR.values())
     cagr_labels  = list(_CAGR.keys())
 
-    # Projection table: 2036 (FIRE), 2038 (mid-check), 2041 (Education)
-    # Note: education is projected from the 2036 corpus at post-retirement 10%
-    # (no new SIPs after FIRE), not with 15 years of contributions
+    # Projection table rows:
+    #   2036 vs combined target (FIRE + edu reserve)
+    #   2038 mid-check
+    #   2041 post-FIRE corpus vs education need
     proj_header = html.Thead(html.Tr([
         html.Th("Year"), html.Th("Note"),
         html.Th("Target", style={"textAlign": "right"}),
@@ -445,9 +497,9 @@ def refresh_portfolio(_n):
 
     proj_body_rows = []
     for label, yrs, tgt, goal_tag, use_post_fire in [
-        (f"2036 ({yrs_fire} yrs)",  yrs_fire,  fire_tgt, "🔥 FIRE", False),
-        (f"2038 ({yrs_fire+2} yrs)", yrs_fire+2, None,    "",        False),
-        (f"2041 ({yrs_edu} yrs)",   yrs_edu,   edu_tgt,  "🎓 Edu",  True),
+        (f"2036 ({yrs_fire} yrs)",   yrs_fire,   combined_tgt, "🎯 FIRE+Edu", False),
+        (f"2038 ({yrs_fire+2} yrs)", yrs_fire+2, None,         "",            False),
+        (f"2041 ({yrs_edu} yrs)",    yrs_edu,    edu_tgt,      "🎓 Edu need", True),
     ]:
         cells = [
             html.Td(label,    style={"fontSize": "12px", "color": "#888"}),
@@ -458,11 +510,10 @@ def refresh_portfolio(_n):
         ]
         for i, cagr in enumerate(cagr_list):
             if use_post_fire:
-                # Edu: grow 2036 corpus at _POST_FIRE_CAGR for 5 years (no SIPs after FIRE)
-                corpus_at_fire = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
+                corpus_at_fire = _fv_corpus(current_corpus, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
                 proj = corpus_at_fire * (1 + _POST_FIRE_CAGR) ** yrs_post_fire
             else:
-                proj = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
+                proj = _fv_corpus(current_corpus, _TOTAL_MONTHLY_SIP, yrs, cagr)
             gap      = proj - tgt if tgt else 0
             on_track = tgt is None or gap >= 0
             gap_str  = "" if tgt is None else (
@@ -477,53 +528,33 @@ def refresh_portfolio(_n):
             ))
         proj_body_rows.append(html.Tr(cells))
 
-    # Shortfall cards — FIRE and Education use different projection logic
-    def _shortfall_card_row(goal_tag, label, tgt, yrs, use_post_fire):
-        action_cols = []
-        for i, (cagr_lbl, cagr) in enumerate(zip(cagr_labels, cagr_list)):
-            if use_post_fire:
-                corpus_at_fire = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
-                proj = corpus_at_fire * (1 + _POST_FIRE_CAGR) ** yrs_post_fire
-                extra_note = f"From 2036 corpus at {int(_POST_FIRE_CAGR*100)}%/yr"
-            else:
-                proj = _fv_corpus(nw, _TOTAL_MONTHLY_SIP, yrs, cagr)
-                extra_note = None
-            gap     = proj - tgt
-            surplus = gap >= 0
-            extra   = _extra_sip(-gap, yrs, cagr) if not surplus and not use_post_fire else 0
-            action_cols.append(dbc.Col(html.Div([
-                html.Div(cagr_lbl, className="metric-label"),
-                html.Div(
-                    "✓ On track" if surplus else fmt_inr(-gap) + " short",
-                    style={"fontWeight": "600", "fontSize": "13px",
-                           "color": "#00c49f" if surplus else "#ff6b6b"},
-                ),
-                html.Div(
-                    (f"Surplus {fmt_inr(gap)}" if surplus
-                     else (f"Need +{fmt_inr(extra)}/mo extra SIP"
-                           if extra else f"Gap {fmt_inr(-gap)}")),
-                    style={"fontSize": "11px",
-                           "color": "#aaa" if surplus else "#ffc107",
-                           "marginTop": "2px"},
-                ),
-                *([] if not extra_note else [
-                    html.Div(extra_note,
-                             style={"fontSize": "10px", "color": "#555", "marginTop": "2px"})
-                ]),
-            ], className="metric-card", style={"padding": "12px 16px"})))
-        return html.Div([
+    # Single shortfall block — combined target at 2036
+    shortfall_cols = []
+    for i, (cagr_lbl, cagr) in enumerate(zip(cagr_labels, cagr_list)):
+        proj    = _fv_corpus(current_corpus, _TOTAL_MONTHLY_SIP, yrs_fire, cagr)
+        gap     = proj - combined_tgt
+        surplus = gap >= 0
+        extra   = _extra_sip(-gap, yrs_fire, cagr)
+        shortfall_cols.append(dbc.Col(html.Div([
+            html.Div(cagr_lbl, className="metric-label"),
+            html.Div(fmt_inr(proj),
+                     style={"fontWeight": "700", "fontSize": "15px",
+                            "color": cagr_colours[i]}),
             html.Div(
-                f"{goal_tag} {label}",
-                style={"fontSize": "12px", "color": "#aaa",
-                       "marginBottom": "8px", "marginTop": "12px"},
+                "✓ Covers FIRE + Education" if surplus
+                else f"▼ {fmt_inr(-gap)} short of {fmt_inr(combined_tgt)}",
+                style={"fontWeight": "600", "fontSize": "12px",
+                       "color": "#00c49f" if surplus else "#ff6b6b",
+                       "marginTop": "4px"},
             ),
-            dbc.Row(action_cols, className="g-2"),
-        ])
-
-    shortfall_rows = [
-        _shortfall_card_row("🔥 FIRE",         f"2036 ({yrs_fire} yrs)",  fire_tgt, yrs_fire, False),
-        _shortfall_card_row("🎓 Education", f"2041 — from 2036 corpus", edu_tgt,  yrs_edu,  True),
-    ]
+            html.Div(
+                f"Surplus {fmt_inr(gap)}" if surplus
+                else f"Extra SIP needed: +{fmt_inr(extra)}/mo",
+                style={"fontSize": "11px",
+                       "color": "#aaa" if surplus else "#ffc107",
+                       "marginTop": "2px"},
+            ),
+        ], className="metric-card", style={"padding": "14px 16px"})))
 
     proj_table = html.Div([
         html.Div("Projected corpus at key milestones",
@@ -533,14 +564,18 @@ def refresh_portfolio(_n):
             [proj_header, html.Tbody(proj_body_rows)],
             bordered=False, size="sm", style={"color": "#e0e0e0"},
         ),
-        html.Div("▲ surplus · ▼ shortfall vs target  |  Education: corpus grows post-FIRE at 10%/yr (no new SIPs)",
-                 style={"fontSize": "10px", "color": "#555", "marginTop": "4px"}),
-        html.Hr(style={"borderColor": "#2a2a3e", "margin": "12px 0"}),
-        html.H6("Goal status by scenario", style={"color": "#aaa", "fontSize": "12px"}),
-        *shortfall_rows,
         html.Div(
-            f"SIPs assumed until FIRE 2036: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = ₹3.02 L/month. "
-            f"Post-FIRE, corpus grows at {int(_POST_FIRE_CAGR*100)}%/yr with no new contributions.",
+            f"2036 target = FIRE {fmt_inr(fire_tgt)} + edu reserve {fmt_inr(edu_reserve_at_fire)} = {fmt_inr(combined_tgt)}  |  "
+            "2041 shows post-FIRE corpus at 10%/yr (no SIPs) vs education need",
+            style={"fontSize": "10px", "color": "#555", "marginTop": "4px"},
+        ),
+        html.Hr(style={"borderColor": "#2a2a3e", "margin": "12px 0"}),
+        html.H6(f"Corpus at 2036 vs combined goal ({fmt_inr(combined_tgt)})",
+                style={"color": "#aaa", "fontSize": "12px", "marginBottom": "8px"}),
+        dbc.Row(shortfall_cols, className="g-2"),
+        html.Div(
+            f"SIPs to 2036: ₹2.5 L equity MF + ₹30 K metals + ₹72 K EPF = {fmt_inr(_TOTAL_MONTHLY_SIP)}/month. "
+            f"Post-FIRE: corpus grows at {int(_POST_FIRE_CAGR*100)}%/yr, no new contributions.",
             style={"fontSize": "11px", "color": "#555", "marginTop": "12px"},
         ),
     ])
@@ -580,7 +615,7 @@ def refresh_portfolio(_n):
             _card("Coverage",
                   f"{detected_avg/_TOTAL_MONTHLY_SIP*100:.0f}%" if _TOTAL_MONTHLY_SIP else "—",
                   "#ffc107",
-                  sub="of profiled ₹3.02 L/mo"),
+                  sub=f"of profiled {fmt_inr(_TOTAL_MONTHLY_SIP)}/mo"),
         ]
 
         if sip_monthly.empty:
