@@ -149,6 +149,31 @@ def batch_update_tags(updates: dict) -> tuple[int, list]:
     except Exception as e:
         return 0, list(updates.keys())
 
+def update_transaction(txn_id: str, updates: dict) -> bool:
+    """Update arbitrary fields of a single transaction row by header name."""
+    if not updates or not txn_id:
+        return False
+    try:
+        ws = _sheet().worksheet("Transactions")
+        headers = [h.strip().lower() for h in ws.row_values(1)]
+        all_ids = ws.col_values(1)
+        if txn_id not in all_ids:
+            return False
+        row_num = all_ids.index(txn_id) + 1
+        cells = []
+        for field, value in updates.items():
+            key = field.strip().lower()
+            if key in headers:
+                col = headers.index(key) + 1
+                cells.append(gspread.Cell(row_num, col,
+                                          str(value) if value is not None else ""))
+        if cells:
+            ws.update_cells(cells, value_input_option="USER_ENTERED")
+        bust("transactions")
+        return True
+    except Exception:
+        return False
+
 def save_rule(matcher_field: str, matcher_contains: str, tag_names: str) -> bool:
     try:
         import uuid

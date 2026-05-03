@@ -15,7 +15,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data import (
     load_transactions, load_accounts, load_tags,
-    batch_update_tags, save_rule,
+    batch_update_tags, save_rule, update_transaction,
     fmt_inr, net_worth, monthly_expense_avg,
 )
 from ai_advisor import get_portfolio_advice
@@ -36,6 +36,11 @@ _MONTHLY_EPF        =  72_000
 _TOTAL_MONTHLY_SIP  = _MONTHLY_EQUITY_SIP + _MONTHLY_METALS_SIP + _MONTHLY_EPF
 _POST_FIRE_CAGR     = 0.10
 _TOP_CATS           = 7
+
+_INPUT_STYLE = {
+    "background": "#1a1a2e", "color": "#e0e0e0",
+    "border": "1px solid #2a2a3e", "fontSize": "13px",
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,13 +64,17 @@ def _to_rows(df):
     rows = []
     for _, r in df.sort_values("date", ascending=False).iterrows():
         rows.append({
-            "id":          str(r.get("id", "")),
-            "date_str":    r["date"].strftime("%d %b %Y") if pd.notna(r["date"]) else "",
-            "amount_str":  f"{icon.get(r['type'], '←')} {fmt_inr(abs(r['amount']))}",
-            "description": str(r.get("description", "")),
-            "tags":        str(r.get("tags", "")),
-            "account_name":str(r.get("account_name", "")),
-            "type":        str(r.get("type", "expense")),
+            "id":           str(r.get("id", "")),
+            "date_str":     r["date"].strftime("%d %b %Y") if pd.notna(r["date"]) else "",
+            "date_raw":     r["date"].strftime("%Y-%m-%d") if pd.notna(r["date"]) else "",
+            "amount_str":   f"{icon.get(r['type'], '←')} {fmt_inr(abs(r['amount']))}",
+            "amount_raw":   float(r.get("amount", 0)),
+            "description":  str(r.get("description", "")),
+            "tags":         str(r.get("tags", "")),
+            "account_name": str(r.get("account_name", "")),
+            "type":         str(r.get("type", "expense")),
+            "transfer_from":str(r.get("transfer_from", "")),
+            "transfer_to":  str(r.get("transfer_to", "")),
         })
     return rows
 
@@ -75,7 +84,6 @@ def _fv_corpus(current, monthly_sip, years, cagr):
     return current * (1 + cagr) ** years + sip_fv
 
 def _simple_buckets(acc_df):
-    """Simplified account → bucket mapping for home page portfolio panel."""
     buckets = {}
     for _, row in acc_df.iterrows():
         nl  = str(row.get("name", "")).lower()
@@ -83,7 +91,7 @@ def _simple_buckets(acc_df):
         bal = float(row.get("computed_balance", 0) or 0)
         if any(k in nl for k in ("loan", " cc", "credit card", "amex", "visa")) or \
            any(k in tl for k in ("credit", "loan")):
-            continue  # exclude liabilities from investable
+            continue
         elif any(k in nl for k in ("gold", "silver", "axisgold", "icicisilve",
                                    "digital gold", "sgb")):
             bucket = "Metals"
@@ -107,7 +115,6 @@ def _simple_buckets(acc_df):
     return {k: v for k, v in sorted(buckets.items(), key=lambda x: -x[1])}
 
 def _fy_bounds(ref: date):
-    """Return (curr_fy_start, prev_fy_start, prev_fy_end) as pd.Timestamps."""
     if ref.month >= 4:
         curr = pd.Timestamp(ref.year, 4, 1)
         prev = pd.Timestamp(ref.year - 1, 4, 1)
@@ -121,20 +128,32 @@ def _fy_bounds(ref: date):
 # ── Column defs ───────────────────────────────────────────────────────────────
 
 _TXN_COLS = [
-    {"field": "id",          "hide": True},
-    {"field": "date_str",    "headerName": "Date",        "width": 105},
-    {"field": "amount_str",  "headerName": "Amount",      "width": 130,
+    {"field": "id",           "hide": True},
+    {"field": "date_raw",     "hide": True},
+    {"field": "amount_raw",   "hide": True},
+    {"field": "transfer_from","hide": True},
+    {"field": "transfer_to",  "hide": True},
+    {"field": "date_str",     "headerName": "Date",        "width": 105,
+     "filter": "agTextColumnFilter"},
+    {"field": "amount_str",   "headerName": "Amount",      "width": 130,
      "cellStyle": {"fontFamily": "monospace"},
      "cellClassRules": {
          "amt-expense":  "params.data.type === 'expense'",
          "amt-income":   "params.data.type === 'income'",
          "amt-transfer": "params.data.type === 'transfer'",
-     }},
-    {"field": "description", "headerName": "Description", "flex": 3, "minWidth": 160},
-    {"field": "tags",        "headerName": "Tags",        "flex": 1, "minWidth": 90,
-     "cellStyle": {"color": "#888", "fontSize": "11px"}},
-    {"field": "account_name","headerName": "Account",     "width": 110,
-     "cellStyle": {"color": "#888", "fontSize": "11px"}},
+     },
+     "filter": "agTextColumnFilter"},
+    {"field": "description",  "headerName": "Description", "flex": 3, "minWidth": 160,
+     "filter": "agTextColumnFilter"},
+    {"field": "tags",         "headerName": "Tags",        "flex": 1, "minWidth": 90,
+     "cellStyle": {"color": "#888", "fontSize": "11px"},
+     "filter": "agTextColumnFilter"},
+    {"field": "account_name", "headerName": "Account",     "width": 110,
+     "cellStyle": {"color": "#888", "fontSize": "11px"},
+     "filter": "agTextColumnFilter"},
+    {"field": "type",         "headerName": "Type",        "width": 90,
+     "cellStyle": {"color": "#888", "fontSize": "11px"},
+     "filter": "agTextColumnFilter"},
 ]
 
 # ── Layout ────────────────────────────────────────────────────────────────────
@@ -184,19 +203,51 @@ def layout():
 
         html.Hr(style={"borderColor": "#2a2a3e"}),
 
-        # ── Transactions ──────────────────────────────────────────────────────
+        # ── Transaction filter bar ────────────────────────────────────────────
         dbc.Row([
             dbc.Col(
+                dbc.InputGroup([
+                    dbc.InputGroupText("🔍",
+                        style={"background": "#1a1a2e", "border": "1px solid #2a2a3e",
+                               "color": "#888", "fontSize": "13px"}),
+                    dbc.Input(id="home-txn-search",
+                              placeholder="Search transactions…",
+                              debounce=True,
+                              style={**_INPUT_STYLE, "fontSize": "12px"}),
+                ]),
+                md=5,
+            ),
+            dbc.Col(
+                dbc.Select(
+                    id="home-txn-filter-field",
+                    options=[
+                        {"label": "All fields",  "value": "all"},
+                        {"label": "Description", "value": "description"},
+                        {"label": "Tags",        "value": "tags"},
+                        {"label": "Account",     "value": "account_name"},
+                        {"label": "Type",        "value": "type"},
+                        {"label": "Date",        "value": "date_str"},
+                    ],
+                    value="all",
+                    style={**_INPUT_STYLE, "fontSize": "12px"},
+                ),
+                md=3,
+            ),
+            dbc.Col(
                 html.Div(id="home-txn-label",
-                         style={"color": "#aaa", "fontSize": "12px", "fontStyle": "italic"}),
+                         style={"color": "#aaa", "fontSize": "12px",
+                                "fontStyle": "italic"}),
                 width="auto",
             ),
             dbc.Col(
-                dbc.Button("✕ Clear filter", id="home-txn-clear", size="sm",
-                           color="secondary", outline=True, style={"fontSize": "11px"}),
+                dbc.Button("✕ Clear", id="home-txn-clear", size="sm",
+                           color="secondary", outline=True,
+                           style={"fontSize": "11px"}),
                 width="auto", className="ms-auto",
             ),
         ], className="mb-2 align-items-center"),
+
+        # ── Transaction grid ──────────────────────────────────────────────────
         dag.AgGrid(
             id="home-txn-grid",
             columnDefs=_TXN_COLS,
@@ -204,7 +255,8 @@ def layout():
             dashGridOptions={
                 "domLayout": "autoHeight",
                 "animateRows": True,
-                "rowSelection": "single",
+                "rowSelection": "multiple",
+                "rowMultiSelectWithClick": True,
                 "suppressRowClickSelection": False,
             },
             defaultColDef={"resizable": True, "sortable": True},
@@ -214,18 +266,83 @@ def layout():
         html.Small(id="home-txn-caption",
                    style={"color": "#666", "marginTop": "4px", "display": "block"}),
 
-        # ── Tag editor modal (replaces inline panel — works on mobile) ─────────
+        # ── Transaction editor modal ──────────────────────────────────────────
         dbc.Modal([
-            dbc.ModalHeader(
-                html.Div(id="home-modal-desc",
-                         style={"fontWeight": "600", "fontSize": "14px",
-                                "color": "#e0e0e0"}),
-                close_button=True,
-            ),
+            dbc.ModalHeader([
+                html.Div([
+                    html.Div(id="home-modal-title",
+                             style={"fontWeight": "600", "fontSize": "14px",
+                                    "color": "#e0e0e0"}),
+                    html.Div(id="home-modal-meta",
+                             style={"fontSize": "11px", "color": "#888",
+                                    "marginTop": "2px"}),
+                ]),
+            ], close_button=True),
             dbc.ModalBody([
-                html.Div(id="home-modal-meta",
-                         style={"fontSize": "11px", "color": "#888",
-                                "marginBottom": "12px"}),
+                # Description
+                dbc.Label("Description", size="sm",
+                           style={"color": "#aaa", "marginBottom": "2px"}),
+                dbc.Input(id="home-modal-description", type="text",
+                          className="mb-3", style=_INPUT_STYLE),
+
+                # Date + Amount + Type
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Date", size="sm",
+                                  style={"color": "#aaa", "marginBottom": "2px"}),
+                        dbc.Input(id="home-modal-date", type="date",
+                                  className="mb-3",
+                                  style={**_INPUT_STYLE, "fontSize": "12px"}),
+                    ], md=4),
+                    dbc.Col([
+                        dbc.Label("Amount (₹)", size="sm",
+                                  style={"color": "#aaa", "marginBottom": "2px"}),
+                        dbc.Input(id="home-modal-amount", type="number",
+                                  min=0, step=1, className="mb-3",
+                                  style={**_INPUT_STYLE, "fontSize": "12px"}),
+                    ], md=4),
+                    dbc.Col([
+                        dbc.Label("Type", size="sm",
+                                  style={"color": "#aaa", "marginBottom": "4px"}),
+                        dbc.RadioItems(
+                            id="home-modal-type",
+                            options=[
+                                {"label": "Expense",  "value": "expense"},
+                                {"label": "Income",   "value": "income"},
+                                {"label": "Transfer", "value": "transfer"},
+                            ],
+                            value="expense",
+                            inline=True,
+                            style={"fontSize": "12px"},
+                        ),
+                    ], md=4),
+                ]),
+
+                # Transfer accounts (conditional — shown only when type = transfer)
+                html.Div([
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Transfer from", size="sm",
+                                      style={"color": "#aaa", "marginBottom": "2px"}),
+                            dbc.Select(id="home-modal-transfer-from",
+                                       style={**_INPUT_STYLE, "fontSize": "12px",
+                                              "marginBottom": "12px"}),
+                        ], md=6),
+                        dbc.Col([
+                            dbc.Label("Transfer to", size="sm",
+                                      style={"color": "#aaa", "marginBottom": "2px"}),
+                            dbc.Select(id="home-modal-transfer-to",
+                                       style={**_INPUT_STYLE, "fontSize": "12px",
+                                              "marginBottom": "12px"}),
+                        ], md=6),
+                    ]),
+                ], id="home-modal-transfer-row", style={"display": "none"}),
+
+                html.Hr(style={"borderColor": "#2a2a3e", "margin": "8px 0"}),
+
+                # Tags + save
+                dbc.Label("Tags", size="sm",
+                           style={"color": "#aaa", "marginBottom": "2px"}),
                 dbc.Row([
                     dbc.Col(
                         dcc.Dropdown(
@@ -239,18 +356,22 @@ def layout():
                         md=9,
                     ),
                     dbc.Col(
-                        dbc.Button("✓ Save Tag", id="home-row-save-btn",
+                        dbc.Button("💾 Save", id="home-row-save-btn",
                                    color="primary", size="sm", className="w-100"),
                         md=3,
                     ),
                 ]),
                 html.Div(id="home-row-save-feedback", className="mt-2"),
             ]),
-        ], id="home-tag-modal", is_open=False, centered=True),
+        ], id="home-tag-modal", is_open=False, centered=True, size="lg"),
 
+        # Stores
         dcc.Store(id="home-row-tag-opts",        data=tag_opts),
         dcc.Store(id="home-row-detail-id",       data=None),
         dcc.Store(id="home-row-detail-merchant", data=None),
+        dcc.Store(id="home-modal-mode",          data="single"),
+        dcc.Store(id="home-edit-ids",            data=[]),
+        dcc.Store(id="home-txn-all-rows",        data=[]),
         dcc.Interval(id="home-refresh", interval=5 * 60 * 1000, n_intervals=0),
     ])
 
@@ -301,10 +422,10 @@ def refresh(_n):
 
     # ── Portfolio panel ───────────────────────────────────────────────────────
     _BUCKET_COLOURS = {
-        "Mutual Funds": "#6c63ff",
-        "EPF":          "#ffc107",
-        "Metals":       "#f0a500",
-        "FD / Debt":    "#e0b840",
+        "Mutual Funds":   "#6c63ff",
+        "EPF":            "#ffc107",
+        "Metals":         "#f0a500",
+        "FD / Debt":      "#e0b840",
         "Savings / Cash": "#26a69a",
     }
     port_rows = []
@@ -312,7 +433,7 @@ def refresh(_n):
         pct = val / total_inv * 100
         col = _BUCKET_COLOURS.get(bkt, "#aaa")
         port_rows.append(html.Tr([
-            html.Td(bkt,        style={"fontSize": "11px", "color": col}),
+            html.Td(bkt, style={"fontSize": "11px", "color": col}),
             html.Td(fmt_inr(val),
                     style={"fontSize": "12px", "fontFamily": "monospace",
                            "textAlign": "right", "color": "#e0e0e0"}),
@@ -340,7 +461,6 @@ def refresh(_n):
     fire_tgt  = _FIRE_MULT * avg_exp * 12
     edu_tgt   = _EDU_USD * (1 + _USD_INFLATION)**yrs_edu * _USD_INR_NOW * (1 + _INR_DEPRECIATION)**yrs_edu
 
-    # Project at base 15% CAGR
     proj_fire = _fv_corpus(total_inv, _TOTAL_MONTHLY_SIP, yrs_fire, 0.15)
     proj_edu  = _fv_corpus(total_inv, _TOTAL_MONTHLY_SIP, yrs_fire, 0.15) * (1 + _POST_FIRE_CAGR)**yrs_post_fire
 
@@ -402,12 +522,11 @@ def refresh(_n):
                 sub = sub[sub["date"] <= end]
             return sub.groupby("primary_tag")["amount"].sum()
 
-        last_mo  = _cat_total(expenses, last_mo_start, last_mo_end)
-        three_mo = _cat_total(expenses, cut3, first_of_month - pd.Timedelta(days=1))
+        last_mo   = _cat_total(expenses, last_mo_start, last_mo_end)
+        three_mo  = _cat_total(expenses, cut3, first_of_month - pd.Timedelta(days=1))
         curr_fy_s = _cat_total(expenses, curr_fy)
         prev_fy_s = _cat_total(expenses, prev_fy, prev_fy_end)
 
-        # All categories that appear in any period
         all_cats = sorted(
             set(last_mo.index) | set(three_mo.index) |
             set(curr_fy_s.index) | set(prev_fy_s.index),
@@ -439,7 +558,6 @@ def refresh(_n):
                 _cell(pfy),
             ]))
 
-        # Totals row
         def _tot(s, divisor=1):
             return s.sum() / divisor if len(s) else 0
 
@@ -479,7 +597,7 @@ def refresh(_n):
             ),
         ])
 
-    # ── Stacked bar — Monthly Expense Trend (12m) ─────────────────────────────
+    # ── Stacked bar ───────────────────────────────────────────────────────────
     if txn_df.empty:
         stacked_fig = _dark_fig(go.Figure())
     else:
@@ -488,7 +606,6 @@ def refresh(_n):
             (txn_df["date"] >= pd.Timestamp.now() - pd.DateOffset(months=12))
         ].copy()
 
-        # Top N categories by total spend
         top_cats = (
             expenses12.groupby("primary_tag")["amount"].sum()
             .sort_values(ascending=False)
@@ -502,7 +619,6 @@ def refresh(_n):
             expenses12.groupby(["month", "_cat"])["amount"].sum()
             .unstack(fill_value=0)
         )
-        # Sort months chronologically
         pivot = pivot.sort_index()
         months = pivot.index.tolist()
         month_labels = [pd.to_datetime(m + "-01").strftime("%b %Y") for m in months]
@@ -620,15 +736,15 @@ def update_ai_banner(_n):
               "borderRadius": "8px", "padding": "12px 16px"})
 
 
-# ── Transactions drill-down ───────────────────────────────────────────────────
+# ── Transactions: drill-down populates all-rows store ─────────────────────────
 
 @callback(
-    Output("home-txn-grid",    "rowData"),
-    Output("home-txn-label",   "children"),
-    Output("home-txn-caption", "children"),
-    Input("home-stacked-bar",  "clickData"),
-    Input("home-txn-clear",    "n_clicks"),
-    Input("home-refresh",      "n_intervals"),
+    Output("home-txn-label",    "children"),
+    Output("home-txn-caption",  "children"),
+    Output("home-txn-all-rows", "data"),
+    Input("home-stacked-bar",   "clickData"),
+    Input("home-txn-clear",     "n_clicks"),
+    Input("home-refresh",       "n_intervals"),
     prevent_initial_call="initial_duplicate",
 )
 def drill_transactions(bar_click, _clear, _refresh):
@@ -656,63 +772,204 @@ def drill_transactions(bar_click, _clear, _refresh):
         txns = txns[txns["date"] >= cut3]
 
     rows    = _to_rows(txns)
-    caption = f"{len(rows):,} transactions · click a row to view / edit tags"
-    return rows, label, caption
+    caption = f"{len(rows):,} transactions · tap a row to edit · shift-click for multi-select"
+    return label, caption, rows
 
 
-# ── Row click → modal tag editor ─────────────────────────────────────────────
+# ── Filter: search + field → grid rowData ────────────────────────────────────
+
+@callback(
+    Output("home-txn-grid",        "rowData"),
+    Input("home-txn-all-rows",     "data"),
+    Input("home-txn-search",       "value"),
+    Input("home-txn-filter-field", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+def apply_filter(all_rows, search, field):
+    if not all_rows:
+        return []
+    if not search:
+        return all_rows
+    sl = search.lower()
+    if field == "all":
+        return [r for r in all_rows
+                if any(sl in str(v).lower() for v in r.values())]
+    return [r for r in all_rows
+            if sl in str(r.get(field, "")).lower()]
+
+
+# ── Row click → modal (single or bulk) ───────────────────────────────────────
 
 @callback(
     Output("home-tag-modal",           "is_open"),
-    Output("home-modal-desc",          "children"),
+    Output("home-modal-title",         "children"),
     Output("home-modal-meta",          "children"),
+    Output("home-modal-description",   "value"),
+    Output("home-modal-description",   "disabled"),
+    Output("home-modal-date",          "value"),
+    Output("home-modal-date",          "disabled"),
+    Output("home-modal-amount",        "value"),
+    Output("home-modal-amount",        "disabled"),
+    Output("home-modal-type",          "value"),
     Output("home-row-tag-dropdown",    "options"),
     Output("home-row-tag-dropdown",    "value"),
     Output("home-row-detail-id",       "data"),
     Output("home-row-detail-merchant", "data"),
+    Output("home-modal-mode",          "data"),
+    Output("home-edit-ids",            "data"),
     Input("home-txn-grid",             "selectedRows"),
     State("home-row-tag-opts",         "data"),
     prevent_initial_call=True,
 )
 def home_show_detail(selected_rows, tag_opts):
+    _nu = no_update
     if not selected_rows:
-        return no_update, no_update, no_update, no_update, no_update, no_update, no_update
-    row = selected_rows[0]
+        return (_nu,) * 16
 
-    current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
-                    if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
-    valid_defaults = [t for t in current_tags
-                      if any(o["value"] == t for o in (tag_opts or []))]
+    if len(selected_rows) == 1:
+        row = selected_rows[0]
+        current_tags = [t.strip() for t in str(row.get("tags", "")).split(",")
+                        if t.strip() and t.strip() not in ("nan", "Untagged", "None")]
+        valid_defaults = [t for t in current_tags
+                          if any(o["value"] == t for o in (tag_opts or []))]
+        merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
+                          row.get("description", "")).split() if len(w) >= 3]
+        merchant_token = merchant_words[0] if merchant_words else ""
 
-    merchant_words = [w for w in re.sub(r"[^a-zA-Z\s]", " ",
-                      row.get("description", "")).split() if len(w) >= 3]
-    merchant_token = merchant_words[0] if merchant_words else ""
+        meta = f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}"
+        date_val   = row.get("date_raw", "")
+        amount_val = abs(float(row.get("amount_raw", 0))) or None
 
-    meta = f"{row['account_name']}  ·  {row['date_str']}  ·  {row['amount_str']}"
-    return (True, row["description"], meta,
-            tag_opts or [], valid_defaults,
-            row.get("id"), merchant_token)
+        return (True,
+                row["description"], meta,
+                row["description"], False,
+                date_val, False,
+                amount_val, False,
+                row.get("type", "expense"),
+                tag_opts or [], valid_defaults,
+                row.get("id"), merchant_token,
+                "single", [row.get("id")])
 
+    else:
+        count = len(selected_rows)
+        ids   = [r.get("id") for r in selected_rows]
+        return (True,
+                f"Editing {count} transactions",
+                "Type and Tags will be applied to all selected rows.",
+                "", True,
+                "", True,
+                None, True,
+                "expense",
+                tag_opts or [], [],
+                None, None,
+                "bulk", ids)
+
+
+# ── Type change → show/hide transfer account fields ───────────────────────────
 
 @callback(
-    Output("home-row-save-feedback",  "children"),
-    Output("home-txn-grid",           "rowData", allow_duplicate=True),
-    Input("home-row-save-btn",        "n_clicks"),
-    State("home-row-tag-dropdown",    "value"),
-    State("home-row-detail-id",       "data"),
-    State("home-row-detail-merchant", "data"),
-    State("home-txn-grid",            "rowData"),
+    Output("home-modal-transfer-row",  "style"),
+    Output("home-modal-transfer-from", "options"),
+    Output("home-modal-transfer-to",   "options"),
+    Output("home-modal-transfer-from", "value"),
+    Output("home-modal-transfer-to",   "value"),
+    Input("home-modal-type",           "value"),
+    Input("home-txn-grid",             "selectedRows"),
+)
+def home_type_changed(txn_type, selected_rows):
+    if txn_type != "transfer":
+        return {"display": "none"}, [], [], None, None
+
+    acc_df = load_accounts()
+    opts = []
+    if not acc_df.empty:
+        opts = [{"label": str(r.get("name", "")), "value": str(r.get("name", ""))}
+                for _, r in acc_df.iterrows()
+                if str(r.get("name", "")).strip()]
+
+    # Pre-fill from/to if editing a single transfer row
+    from_val = to_val = None
+    if selected_rows and len(selected_rows) == 1:
+        from_val = selected_rows[0].get("transfer_from") or None
+        to_val   = selected_rows[0].get("transfer_to")   or None
+
+    return {}, opts, opts, from_val, to_val
+
+
+# ── Save transaction(s) ───────────────────────────────────────────────────────
+
+@callback(
+    Output("home-row-save-feedback", "children"),
+    Output("home-txn-grid",          "rowData", allow_duplicate=True),
+    Input("home-row-save-btn",       "n_clicks"),
+    State("home-modal-mode",         "data"),
+    State("home-modal-description",  "value"),
+    State("home-modal-date",         "value"),
+    State("home-modal-amount",       "value"),
+    State("home-modal-type",         "value"),
+    State("home-modal-transfer-from","value"),
+    State("home-modal-transfer-to",  "value"),
+    State("home-row-tag-dropdown",   "value"),
+    State("home-row-detail-id",      "data"),
+    State("home-edit-ids",           "data"),
+    State("home-txn-grid",           "rowData"),
     prevent_initial_call=True,
 )
-def home_save_tag(n_clicks, chosen_tags, row_id, merchant, row_data):
-    if not n_clicks or not chosen_tags or not row_id:
+def home_save_transaction(n_clicks, mode, description, date_val, amount,
+                           txn_type, transfer_from, transfer_to,
+                           chosen_tags, row_id, edit_ids, row_data):
+    if not n_clicks:
         return no_update, no_update
-    tags_str = ", ".join(chosen_tags)
-    saved, _ = batch_update_tags({row_id: tags_str})
-    if not saved:
-        return dbc.Alert("❌ Save failed.", color="danger", duration=4000), no_update
-    updated = [{**r, "tags": tags_str} if r.get("id") == row_id else r
-               for r in (row_data or [])]
-    return dbc.Alert(f"✅ Saved: {tags_str}", color="success", duration=3000), updated
 
+    tags_str = ", ".join(chosen_tags) if chosen_tags else ""
 
+    if mode == "single" and row_id:
+        updates = {}
+        if description is not None: updates["description"]    = description
+        if date_val:                 updates["date"]           = date_val
+        if amount is not None:       updates["amount"]         = abs(float(amount))
+        if txn_type:                 updates["type"]           = txn_type
+        if tags_str:                 updates["tags"]           = tags_str
+        if txn_type == "transfer":
+            if transfer_from:        updates["transfer_from"]  = transfer_from
+            if transfer_to:          updates["transfer_to"]    = transfer_to
+
+        ok = update_transaction(row_id, updates)
+        if not ok:
+            return dbc.Alert("❌ Save failed.", color="danger", duration=4000), no_update
+
+        updated = []
+        for r in (row_data or []):
+            if r.get("id") == row_id:
+                r = dict(r)
+                if description is not None: r["description"]  = description
+                if tags_str:                r["tags"]          = tags_str
+                if txn_type:                r["type"]          = txn_type
+            updated.append(r)
+        return dbc.Alert("✅ Saved!", color="success", duration=3000), updated
+
+    elif mode == "bulk" and edit_ids:
+        bulk_updates = {}
+        if tags_str:  bulk_updates["tags"] = tags_str
+        if txn_type:  bulk_updates["type"] = txn_type
+        if not bulk_updates:
+            return dbc.Alert("⚠️ Nothing selected to update.", color="warning", duration=3000), no_update
+
+        errors = sum(
+            0 if update_transaction(uid, bulk_updates) else 1
+            for uid in edit_ids
+        )
+        updated = []
+        for r in (row_data or []):
+            if r.get("id") in set(edit_ids):
+                r = dict(r)
+                if tags_str:  r["tags"] = tags_str
+                if txn_type:  r["type"] = txn_type
+            updated.append(r)
+
+        msg = (f"⚠️ Saved with {errors} error(s)." if errors
+               else f"✅ Updated {len(edit_ids)} transactions!")
+        color = "warning" if errors else "success"
+        return dbc.Alert(msg, color=color, duration=4000), updated
+
+    return dbc.Alert("⚠️ Nothing to save.", color="warning", duration=3000), no_update
