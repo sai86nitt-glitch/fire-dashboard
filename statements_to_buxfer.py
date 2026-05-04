@@ -145,8 +145,8 @@ def _collect_statements():
         elif fl.endswith(".pdf"):
             if "autoloan" in fl or "loan" in fl:
                 files.append((path, parse_auto_loan_pdf))
-            else:
-                files.append((path, parse_demat_pdf))
+            # Demat PDFs track unit quantities (ETF/shares), not ₹ amounts —
+            # they don't map to Buxfer transactions so we skip them here.
 
     return files
 
