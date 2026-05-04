@@ -227,6 +227,8 @@ def main():
                         help="Print what would be uploaded, don't POST")
     parser.add_argument("--limit", type=int, default=None,
                         help="Max transactions to upload (for testing)")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="Skip confirmation prompt and upload immediately")
     args = parser.parse_args()
 
     print("\n=== statements_to_buxfer ===\n")
@@ -284,13 +286,16 @@ def main():
         print("\n[dry-run] No changes made.")
         return
 
-    confirm = input(f"\nUpload {len(new_rows)} transactions to Buxfer? [y/N] ").strip().lower()
-    if confirm != "y":
-        print("Aborted.")
-        return
+    if not args.yes:
+        confirm = input(f"\nUpload {len(new_rows)} transactions to Buxfer? [y/N] ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            return
 
     # ── Upload ────────────────────────────────────────────────────────────────
-    succeeded = failed = 0
+    succeeded_rows = []
+    failed_rows    = []
+
     for i, row in enumerate(new_rows, 1):
         desc  = str(row[COL_DESC])[:40]
         date  = str(row[COL_DATE])[:10]
@@ -300,18 +305,48 @@ def main():
               end="  ")
         ok = upload_transaction(token, row, acct_map)
         if ok:
-            succeeded += 1
+            succeeded_rows.append(row)
             print("✓")
         else:
-            failed += 1
+            failed_rows.append(row)
             print("✗")
         time.sleep(0.4)   # ~2.5 req/s — stay well within rate limits
 
+    # ── Save upload log (for reverting if needed) ─────────────────────────────
+    if succeeded_rows:
+        import json as _json
+        from datetime import datetime as _dt
+        log_dir  = os.path.join(BASE_DIR, "outputs", "buxfer_uploads")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"uploaded_{_dt.now().strftime('%Y-%m-%d_%H%M%S')}.json")
+        log_data = {
+            "uploaded_at": _dt.now().isoformat(),
+            "count": len(succeeded_rows),
+            "transactions": [
+                {
+                    "id":      row[COL_ID],
+                    "date":    row[COL_DATE],
+                    "desc":    row[COL_DESC],
+                    "amount":  row[COL_AMT],
+                    "type":    row[COL_TYPE],
+                    "account": row[COL_ACCT],
+                    "tags":    row[COL_TAGS],
+                }
+                for row in succeeded_rows
+            ],
+        }
+        with open(log_file, "w") as f:
+            _json.dump(log_data, f, indent=2, default=str)
+        print(f"\n  💾 Upload log saved → {log_file}")
+        print(f"     (use this to identify and delete any incorrect uploads)")
+
     print(f"\n{'='*60}")
-    print(f"  ✓ Uploaded:  {succeeded}")
-    print(f"  ✗ Failed:    {failed}")
+    print(f"  ✓ Uploaded:  {len(succeeded_rows)}")
+    print(f"  ✗ Failed:    {len(failed_rows)}")
     print(f"  ⟳ Skipped:   {skipped} (already in Buxfer)")
     print(f"{'='*60}\n")
+    if len(failed_rows):
+        print(f"  Failed transactions written to log too — check {log_file}")
     print("Run sync_all.py next to pull everything back into the Google Sheet.\n")
 
 
