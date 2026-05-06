@@ -268,6 +268,7 @@ def layout():
                 "rowMultiSelectWithClick": True,
                 "suppressRowClickSelection": False,
                 "suppressCellFocus": True,
+                "suppressDoubleClickEdit": True,
             },
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
@@ -833,7 +834,7 @@ def drill_transactions(bar_click, _clear, _refresh):
         txns = txns[txns["date"] >= cut3]
 
     rows    = _to_rows(txns)
-    caption = f"{len(rows):,} transactions · tap a row to edit · shift-click for multi-select"
+    caption = f"{len(rows):,} transactions · double-tap a row to edit · shift-click for multi-select"
     return label, caption, rows
 
 
@@ -878,12 +879,13 @@ def apply_filter(all_rows, search, field):
     Output("home-row-detail-merchant", "data"),
     Output("home-modal-mode",          "data"),
     Output("home-edit-ids",            "data"),
-    Input("home-txn-grid",             "cellClicked"),
+    Input("home-txn-grid",             "cellDoubleClicked"),
     State("home-txn-grid",             "selectedRows"),
     State("home-row-tag-opts",         "data"),
     prevent_initial_call=True,
 )
-def home_show_detail(cell_clicked, selected_rows, tag_opts):
+def home_show_detail(cell_double_clicked, selected_rows, tag_opts):
+    cell_clicked = cell_double_clicked
     _nu = no_update
     if not cell_clicked:
         return (_nu,) * 16

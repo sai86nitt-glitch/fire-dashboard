@@ -37,7 +37,7 @@ body, .dash-app-content {
   --ag-row-height: 36px;
   --ag-header-height: 32px;
 }
-.ag-cell { color: #e0e0e0 !important; }
+.ag-cell { color: #e0e0e0 !important; touch-action: manipulation; }
 .ag-header-cell-text { color: #b0b0b0 !important; }
 
 /* ── Detail panel ────────────────────────────────────────────────────────── */

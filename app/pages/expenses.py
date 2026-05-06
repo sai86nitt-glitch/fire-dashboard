@@ -187,6 +187,7 @@ def layout():
                 "rowMultiSelectWithClick": True,
                 "suppressRowClickSelection": False,
                 "suppressCellFocus": True,
+                "suppressDoubleClickEdit": True,
             },
             defaultColDef={"resizable": True, "sortable": True},
             className="ag-theme-alpine-dark",
@@ -486,7 +487,7 @@ def drill_transactions(bar_click, pie_click, treemap_click, clear_clicks,
             label = f"Category: {click_label}"
 
     rows    = _to_rows(expenses)
-    caption = f"{len(rows):,} transactions · tap a row to edit · shift-click for multi-select"
+    caption = f"{len(rows):,} transactions · double-tap a row to edit · shift-click for multi-select"
     return label, caption, rows
 
 
@@ -528,12 +529,13 @@ def exp_apply_filter(all_rows, search, field):
     Output("exp-row-detail-merchant", "data"),
     Output("exp-modal-mode",          "data"),
     Output("exp-edit-ids",            "data"),
-    Input("exp-txn-grid",             "cellClicked"),
+    Input("exp-txn-grid",             "cellDoubleClicked"),
     State("exp-txn-grid",             "selectedRows"),
     State("exp-row-tag-opts",         "data"),
     prevent_initial_call=True,
 )
-def exp_show_detail(cell_clicked, selected_rows, tag_opts):
+def exp_show_detail(cell_double_clicked, selected_rows, tag_opts):
+    cell_clicked = cell_double_clicked
     _nu = no_update
     if not cell_clicked:
         return (_nu,) * 16
