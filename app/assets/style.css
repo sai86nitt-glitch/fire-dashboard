@@ -58,6 +58,38 @@ body, .dash-app-content {
   border-radius: 10px;
   padding: 16px 20px;
   border: 1px solid #2a2a3e;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+}
+.metric-card:hover {
+  transform: scale(1.018);
+  box-shadow: 0 8px 28px rgba(108, 99, 255, 0.13);
+  border-color: #3a3a5e;
+}
+
+/* ── Chart hover lift ────────────────────────────────────────────────────── */
+.chart-wrap {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chart-wrap:hover {
+  transform: scale(1.012);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Scroll-triggered fade-up ────────────────────────────────────────────── */
+.fade-up {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.fade-up.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 .metric-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; }
 .metric-value { font-size: 22px; font-weight: 600; color: #e0e0e0; margin-top: 2px; }
