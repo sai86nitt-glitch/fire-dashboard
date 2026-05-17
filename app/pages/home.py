@@ -173,7 +173,7 @@ def layout():
 
     return html.Div([
         # AI advice banner
-        html.Div(id="home-ai-banner", className="mb-3 fade-up", **{"data-delay": "0"}),
+        html.Div(id="home-ai-banner", className="mb-3 fade-up"),
 
         # ── Top 3-panel row ───────────────────────────────────────────────────
         dbc.Row([
@@ -182,7 +182,7 @@ def layout():
                          style={"fontSize": "12px", "fontWeight": "600",
                                 "color": "#aaa", "marginBottom": "8px"}),
                 html.Div(id="home-accounts-panel"),
-            ], className="metric-card fade-up", **{"data-delay": "0"},
+            ], className="metric-card fade-up delay-1",
                style={"padding": "14px 16px", "height": "100%"}), md=4),
 
             dbc.Col(html.Div([
@@ -190,7 +190,7 @@ def layout():
                          style={"fontSize": "12px", "fontWeight": "600",
                                 "color": "#aaa", "marginBottom": "8px"}),
                 html.Div(id="home-portfolio-panel"),
-            ], className="metric-card fade-up", **{"data-delay": "80"},
+            ], className="metric-card fade-up delay-2",
                style={"padding": "14px 16px", "height": "100%"}), md=4),
 
             dbc.Col(html.Div([
@@ -198,21 +198,21 @@ def layout():
                          style={"fontSize": "12px", "fontWeight": "600",
                                 "color": "#aaa", "marginBottom": "8px"}),
                 html.Div(id="home-retirement-panel"),
-            ], className="metric-card fade-up", **{"data-delay": "160"},
+            ], className="metric-card fade-up delay-3",
                style={"padding": "14px 16px", "height": "100%"}), md=4),
         ], className="mb-3 g-2"),
 
         html.Hr(style={"borderColor": "#2a2a3e"}),
 
         # ── Expense Trends table ──────────────────────────────────────────────
-        html.Div(id="home-expense-table", className="mb-3 fade-up", **{"data-delay": "0"}),
+        html.Div(id="home-expense-table", className="mb-3 fade-up"),
 
         # ── Monthly stacked bar ───────────────────────────────────────────────
         dbc.Row([
             dbc.Col(html.Div(dcc.Graph(id="home-stacked-bar", figure=_blank(),
                               config={"displayModeBar": False}),
                              className="chart-wrap"), md=12),
-        ], className="mb-3 fade-up", **{"data-delay": "0"}),
+        ], className="mb-3 fade-up"),
 
         html.Hr(style={"borderColor": "#2a2a3e"}),
 

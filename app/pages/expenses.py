@@ -121,7 +121,7 @@ def layout():
         html.Hr(style={"borderColor": "#2a2a3e"}),
 
         # Metrics row
-        dbc.Row(id="exp-metrics", className="mb-3 g-2 fade-up", **{"data-delay": "0"}),
+        dbc.Row(id="exp-metrics", className="mb-3 g-2 fade-up"),
 
         # Charts
         dbc.Row([
@@ -129,12 +129,12 @@ def layout():
                              config={"displayModeBar": False}), className="chart-wrap"), md=8),
             dbc.Col(html.Div(dcc.Graph(id="exp-pie",  figure=_blank(),
                              config={"displayModeBar": False}), className="chart-wrap"), md=4),
-        ], className="mb-3 g-2 fade-up", **{"data-delay": "80"}),
+        ], className="mb-3 g-2 fade-up"),
 
         dbc.Row([
             dbc.Col(html.Div(dcc.Graph(id="exp-treemap", figure=_blank(),
                              config={"displayModeBar": False}), className="chart-wrap"), md=12),
-        ], className="mb-3 g-2 fade-up", **{"data-delay": "0"}),
+        ], className="mb-3 g-2 fade-up"),
 
         # ── Transactions drill-down ───────────────────────────────────────────
         html.Hr(style={"borderColor": "#2a2a3e"}),

@@ -87,10 +87,10 @@ body, .dash-app-content {
   transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1),
               transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.fade-up.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
+.fade-up.visible   { opacity: 1; transform: translateY(0); }
+.delay-1.fade-up   { transition-delay: 0s; }
+.delay-2.fade-up   { transition-delay: 0.09s; }
+.delay-3.fade-up   { transition-delay: 0.18s; }
 .metric-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; }
 .metric-value { font-size: 22px; font-weight: 600; color: #e0e0e0; margin-top: 2px; }
 
