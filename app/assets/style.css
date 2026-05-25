@@ -127,6 +127,31 @@ input.dash-input::placeholder { color: #666 !important; }
 .amt-income  { color: #00c49f; }
 .amt-transfer { color: #ffc107; }
 
+/* ── Accordion (accounts panel) ─────────────────────────────────────────── */
+.accordion-button {
+  background: transparent !important;
+  color: #e0e0e0 !important;
+  padding: 7px 4px !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid #2a2a3e !important;
+}
+.accordion-button:not(.collapsed) {
+  background: #1a1a2e !important;
+  color: #e0e0e0 !important;
+}
+.accordion-button::after {
+  filter: invert(0.6) !important;
+}
+.accordion-body {
+  background: #0e0e1a !important;
+  padding: 6px 4px !important;
+  border-bottom: 1px solid #2a2a3e !important;
+}
+.accordion-item {
+  background: transparent !important;
+  border: none !important;
+}
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #1e1e2e; }

@@ -175,31 +175,23 @@ def layout():
         # AI advice banner
         html.Div(id="home-ai-banner", className="mb-3 fade-up"),
 
-        # ── Top 3-panel row ───────────────────────────────────────────────────
+        # ── Top 2-panel row ───────────────────────────────────────────────────
         dbc.Row([
             dbc.Col(html.Div([
-                html.Div("💳 Current Balances",
+                html.Div("💳 Balances by Category",
                          style={"fontSize": "12px", "fontWeight": "600",
                                 "color": "#aaa", "marginBottom": "8px"}),
                 html.Div(id="home-accounts-panel"),
             ], className="metric-card fade-up delay-1",
-               style={"padding": "14px 16px", "height": "100%"}), md=4),
-
-            dbc.Col(html.Div([
-                html.Div("📈 Investment Portfolio",
-                         style={"fontSize": "12px", "fontWeight": "600",
-                                "color": "#aaa", "marginBottom": "8px"}),
-                html.Div(id="home-portfolio-panel"),
-            ], className="metric-card fade-up delay-2",
-               style={"padding": "14px 16px", "height": "100%"}), md=4),
+               style={"padding": "14px 16px", "height": "100%"}), md=7),
 
             dbc.Col(html.Div([
                 html.Div("🎯 Retirement Targets",
                          style={"fontSize": "12px", "fontWeight": "600",
                                 "color": "#aaa", "marginBottom": "8px"}),
                 html.Div(id="home-retirement-panel"),
-            ], className="metric-card fade-up delay-3",
-               style={"padding": "14px 16px", "height": "100%"}), md=4),
+            ], className="metric-card fade-up delay-2",
+               style={"padding": "14px 16px", "height": "100%"}), md=5),
         ], className="mb-3 g-2"),
 
         html.Hr(style={"borderColor": "#2a2a3e"}),
@@ -393,9 +385,41 @@ def layout():
 
 # ── Main refresh callback ─────────────────────────────────────────────────────
 
+_BUCKET_META = {
+    "Mutual Funds":   {"icon": "📈", "color": "#6c63ff"},
+    "EPF":            {"icon": "🏛️",  "color": "#ffc107"},
+    "FD / Debt":      {"icon": "🏦",  "color": "#e0b840"},
+    "Savings / Cash": {"icon": "💵",  "color": "#26a69a"},
+    "Metals":         {"icon": "🪙",  "color": "#f0a500"},
+}
+
+def _classify_account(row):
+    """Return the bucket name for a single account row."""
+    nl  = str(row.get("name", "")).lower()
+    tl  = str(row.get("type", "")).lower()
+    bal = float(row.get("computed_balance", 0) or 0)
+    if any(k in nl for k in ("loan", " cc", "credit card", "amex", "visa")) or \
+       any(k in tl for k in ("credit", "loan")):
+        return "Liabilities"
+    if any(k in nl for k in ("gold", "silver", "axisgold", "icicisilve", "digital gold", "sgb")):
+        return "Metals"
+    if any(k in nl for k in ("epf", "provident", " pf")) or \
+       any(k in tl for k in ("epf", "pf", "provident")):
+        return "EPF"
+    if any(k in nl for k in ("fixed deposit", " fd ", "fd-", "swaritha")):
+        return "FD / Debt"
+    if any(k in nl for k in (
+        "fund", "nifty", "sensex", " mf", "equity", "flexi", "elss",
+        "nippon", "dsp", "motilal", "mirae", "franklin", "paytm money",
+        "onetreehill", "one tree", "nasdaq", "parag parikh",
+    )) or any(k in tl for k in ("mutual", "fund", "mf", "investment", "brokerage")):
+        return "Mutual Funds"
+    if "xxxx" in nl and 0 < bal < 1_000_000:
+        return "Mutual Funds"
+    return "Savings / Cash"
+
 @callback(
     Output("home-accounts-panel",   "children"),
-    Output("home-portfolio-panel",  "children"),
     Output("home-retirement-panel", "children"),
     Output("home-expense-table",    "children"),
     Output("home-stacked-bar",      "figure"),
@@ -411,62 +435,78 @@ def refresh(_n):
     buckets = _simple_buckets(acc_df) if not acc_df.empty else {}
     total_inv = sum(buckets.values()) or max(nw, 1)
 
-    # ── Accounts panel ────────────────────────────────────────────────────────
+    # ── Accounts panel — collapsible accordion grouped by category ────────────
     if acc_df.empty:
         acct_panel = html.P("No data", style={"color": "#666", "fontSize": "12px"})
     else:
-        rows = []
+        # Group accounts into categories
+        groups: dict[str, list] = {}
         for _, r in acc_df.sort_values("computed_balance", key=abs, ascending=False).iterrows():
-            bal = float(r.get("computed_balance", 0) or 0)
-            col = "#00c49f" if bal >= 0 else "#ff6b6b"
-            rows.append(html.Tr([
-                html.Td(str(r.get("name", "")),
-                        style={"fontSize": "11px", "color": "#e0e0e0",
-                               "maxWidth": "140px", "overflow": "hidden",
-                               "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-                html.Td(fmt_inr(bal),
-                        style={"fontSize": "12px", "color": col, "fontFamily": "monospace",
-                               "textAlign": "right", "whiteSpace": "nowrap"}),
-            ]))
-        acct_panel = html.Div([
-            dbc.Table([html.Tbody(rows)], bordered=False, size="sm",
-                      style={"color": "#e0e0e0", "marginBottom": "4px"}),
-            html.Div(f"Net worth: {fmt_inr(nw)}",
-                     style={"fontSize": "11px", "color": "#555", "marginTop": "4px"}),
-        ])
+            cat = _classify_account(r)
+            groups.setdefault(cat, []).append(r)
 
-    # ── Portfolio panel ───────────────────────────────────────────────────────
-    _BUCKET_COLOURS = {
-        "Mutual Funds":   "#6c63ff",
-        "EPF":            "#ffc107",
-        "Metals":         "#f0a500",
-        "FD / Debt":      "#e0b840",
-        "Savings / Cash": "#26a69a",
-    }
-    port_rows = []
-    for bkt, val in buckets.items():
-        pct = val / total_inv * 100
-        col = _BUCKET_COLOURS.get(bkt, "#aaa")
-        port_rows.append(html.Tr([
-            html.Td(bkt, style={"fontSize": "11px", "color": col}),
-            html.Td(fmt_inr(val),
-                    style={"fontSize": "12px", "fontFamily": "monospace",
-                           "textAlign": "right", "color": "#e0e0e0"}),
-            html.Td(f"{pct:.0f}%",
-                    style={"fontSize": "10px", "color": "#666",
-                           "textAlign": "right", "width": "36px"}),
-        ]))
-    port_rows.append(html.Tr([
-        html.Td("Total", style={"fontSize": "12px", "fontWeight": "700",
-                                "color": "#00c49f", "borderTop": "1px solid #2a2a3e"}),
-        html.Td(fmt_inr(total_inv),
-                style={"fontSize": "13px", "fontFamily": "monospace", "fontWeight": "700",
-                       "textAlign": "right", "color": "#00c49f",
-                       "borderTop": "1px solid #2a2a3e"}),
-        html.Td("", style={"borderTop": "1px solid #2a2a3e"}),
-    ]))
-    port_panel = dbc.Table([html.Tbody(port_rows)], bordered=False, size="sm",
-                           style={"color": "#e0e0e0"})
+        cat_order = ["Mutual Funds", "EPF", "Savings / Cash", "FD / Debt", "Metals", "Liabilities"]
+
+        accordion_items = []
+        for cat in cat_order:
+            if cat not in groups:
+                continue
+            accts = groups[cat]
+            cat_total = sum(float(r.get("computed_balance", 0) or 0) for r in accts)
+            meta = _BUCKET_META.get(cat, {"icon": "💼", "color": "#aaa"})
+            col  = meta["color"]
+            is_liability = cat == "Liabilities"
+
+            # Category header row
+            pct_of_inv = (cat_total / total_inv * 100) if not is_liability and total_inv else None
+
+            header = html.Div([
+                html.Span(f"{meta['icon']} {cat}",
+                          style={"fontSize": "12px", "color": col, "fontWeight": "600"}),
+                html.Span([
+                    html.Span(fmt_inr(cat_total),
+                              style={"fontFamily": "monospace", "fontSize": "12px",
+                                     "color": "#ff6b6b" if is_liability else "#e0e0e0"}),
+                    html.Span(f"  {pct_of_inv:.0f}%",
+                              style={"fontSize": "10px", "color": "#555",
+                                     "marginLeft": "6px"}) if pct_of_inv is not None else None,
+                ], style={"marginLeft": "auto"}),
+            ], style={"display": "flex", "alignItems": "center",
+                      "width": "100%", "justifyContent": "space-between"})
+
+            # Account rows inside
+            acc_rows = []
+            for r in accts:
+                bal = float(r.get("computed_balance", 0) or 0)
+                acc_rows.append(html.Div([
+                    html.Span(str(r.get("name", "")),
+                              style={"fontSize": "11px", "color": "#aaa",
+                                     "overflow": "hidden", "textOverflow": "ellipsis",
+                                     "whiteSpace": "nowrap", "flex": "1",
+                                     "minWidth": 0}),
+                    html.Span(fmt_inr(bal),
+                              style={"fontSize": "11px", "fontFamily": "monospace",
+                                     "color": "#00c49f" if bal >= 0 else "#ff6b6b",
+                                     "whiteSpace": "nowrap", "marginLeft": "8px"}),
+                ], style={"display": "flex", "justifyContent": "space-between",
+                          "padding": "2px 0", "alignItems": "center"}))
+
+            accordion_items.append(
+                dbc.AccordionItem(
+                    html.Div(acc_rows, style={"padding": "4px 0"}),
+                    title=header,
+                    item_id=cat,
+                )
+            )
+
+        acct_panel = html.Div([
+            dbc.Accordion(accordion_items, start_collapsed=True, flush=True,
+                          style={"background": "transparent"}),
+            html.Div(f"Net worth: {fmt_inr(nw)}",
+                     style={"fontSize": "10px", "color": "#444",
+                            "marginTop": "8px", "paddingTop": "6px",
+                            "borderTop": "1px solid #2a2a3e"}),
+        ])
 
     # ── Retirement panel ──────────────────────────────────────────────────────
     yrs_fire      = _FIRE_YEAR - today.year
@@ -711,7 +751,7 @@ def refresh(_n):
         )
         _dark_fig(stacked_fig)
 
-    return acct_panel, port_panel, ret_panel, exp_table, stacked_fig
+    return acct_panel, ret_panel, exp_table, stacked_fig
 
 
 # ── AI advice banner ──────────────────────────────────────────────────────────
